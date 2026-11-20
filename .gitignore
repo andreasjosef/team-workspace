@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+*.log
+coverage
+.DS_Store
+# Per-task workspaces when TASKS_DIR points inside the repo
+.tasks
+demo/verdaccio/storage

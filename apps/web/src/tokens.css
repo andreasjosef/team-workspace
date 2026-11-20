@@ -1,0 +1,130 @@
+/*
+  Bitverkstad: my personal project style. See README.md beside this file.
+  Copy into a project and build on the variables. Dark only for now.
+*/
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #131311;
+  --bg-mid: #1c1c1a; /* sidebars, code blocks */
+  --bg-soft: #262626; /* floats, menus, borders, hovered rows */
+  --bg-hover: #3a3935; /* hovered row inside a bg-soft surface */
+
+  /* Text */
+  --faint: #505050;
+  --muted: #928374;
+  --text: #d4c9af; /* all text, from bitverkstad.css */
+
+  /* Accent and meaning */
+  --gold: #d79921; /* the accent: active, selected, focused; warnings */
+  --red: #ea6962; /* errors, danger */
+  --green: #a9b665; /* success, additions */
+  --blue: #7daea3; /* links, info */
+  --purple: #d3869b; /* constants, special */
+  --cyan: #89b482; /* hints */
+
+  --selection: rgba(215, 153, 33, 0.25);
+  --highlight: rgba(215, 153, 33, 0.4);
+
+  /* Type */
+  --font-text: 'Atkinson Hyperlegible Next', 'Inter', system-ui, sans-serif;
+  --font-serif: 'Gelasio', Georgia, serif;
+  --font-mono:
+    'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, monospace;
+  --line-height: 1.6;
+  --unit: calc(1rem * var(--line-height)); /* one line of body text */
+
+  --radius: 6px;
+}
+
+/* Base */
+html {
+  background: var(--bg);
+  color: var(--text);
+}
+body {
+  margin: 0;
+  font-family: var(--font-text);
+  line-height: var(--line-height);
+  letter-spacing: 0.01em;
+  word-spacing: 0.02em;
+}
+::selection {
+  background: var(--selection);
+}
+
+a {
+  color: var(--blue);
+  text-decoration-color: var(--faint);
+}
+a:hover {
+  color: var(--gold);
+}
+
+/* Space only below blocks, so gaps never double */
+:is(p, ul, ol, blockquote, pre, table) {
+  margin: 0 0 var(--unit);
+}
+
+/* Headings: same colour as text, louder by weight and size */
+:is(h1, h2, h3, h4, h5, h6) {
+  color: var(--text);
+  margin: 0 0 calc(var(--unit) * 0.5);
+  line-height: 1.25;
+}
+h1 {
+  font-size: 1.6em;
+  font-weight: 750;
+  margin-top: calc(var(--unit) * 2);
+}
+h2 {
+  font-size: 1.35em;
+  font-weight: 700;
+  margin-top: calc(var(--unit) * 1.75);
+}
+h3 {
+  font-size: 1.15em;
+  font-weight: 700;
+  margin-top: calc(var(--unit) * 1.5);
+}
+:is(h4, h5, h6) {
+  font-size: 1.05em;
+  font-weight: 650;
+  margin-top: calc(var(--unit) * 1.25);
+}
+:is(h1, h2) {
+  border-bottom: 1px solid var(--bg-soft);
+  padding-bottom: 0.2em;
+}
+
+/* Code: terminal font and spacing; blocks scroll rather than wrap */
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+pre {
+  background: var(--bg-mid);
+  color: var(--text);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+:not(pre) > code {
+  background: var(--bg-mid);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+mark {
+  background: var(--highlight);
+  color: inherit;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--bg-soft);
+}

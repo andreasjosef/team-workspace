@@ -1,0 +1,56 @@
+# The always-on pieces around the hub. The hub itself runs
+# on the host (systemd on the VM, `pnpm dev` locally) because it starts
+# sandbox containers; sandboxes are started by it, not by compose.
+#
+#   sandbox network (internal: no route out) ── egress-proxy ── egress network ── verdaccio ── npmjs
+#
+# Locally: `docker compose up -d` (or podman compose) starts verdaccio and the
+# proxy. On the VM: `docker compose --profile vm up -d` adds Caddy.
+# `,z` on bind mounts: SELinux relabel (Fedora); ignored where SELinux is off.
+name: team-workspace
+
+services:
+  verdaccio:
+    image: docker.io/verdaccio/verdaccio:6
+    restart: unless-stopped
+    networks: [egress]
+    # Loopback only: for publishing the demo package from the host.
+    ports: ['127.0.0.1:4873:4873']
+    volumes:
+      - ./demo/verdaccio/config.yaml:/verdaccio/conf/config.yaml:ro,z
+      - verdaccio-storage:/verdaccio/storage
+
+  egress-proxy:
+    build: apps/egress-proxy
+    restart: unless-stopped
+    environment:
+      ALLOW: verdaccio:4873
+    networks: [sandbox, egress]
+    # The denied-request log, for the hub. Loopback only.
+    ports: ['127.0.0.1:8081:8081']
+
+  caddy:
+    image: docker.io/library/caddy:2-alpine
+    profiles: [vm]
+    restart: unless-stopped
+    # Host network: Caddy proxies /api to the hub on 127.0.0.1:3000.
+    network_mode: host
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - ./apps/web/dist:/srv/web:ro,z
+      - caddy-data:/data
+      - caddy-config:/config
+
+networks:
+  sandbox:
+    name: sandbox
+    internal: true
+  egress:
+    name: team-workspace-egress
+
+volumes:
+  verdaccio-storage:
+  caddy-data:
+  caddy-config:

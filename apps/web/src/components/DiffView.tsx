@@ -1,0 +1,29 @@
+const lineClass = (line: string) => {
+  if (
+    line.startsWith('diff ') ||
+    line.startsWith('+++') ||
+    line.startsWith('---')
+  )
+    return 'file';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  if (line.startsWith('@@')) return 'hunk';
+  return '';
+};
+
+export const DiffView = ({ diff }: { diff: string }) => (
+  <div className="panel" style={{ padding: 0 }}>
+    <h2 style={{ padding: '0.9rem 1rem 0' }}>Diff</h2>
+    <pre className="diff">
+      {diff ? (
+        diff.split('\n').map((line, i) => (
+          <div key={i} className={lineClass(line)}>
+            {line || ' '}
+          </div>
+        ))
+      ) : (
+        <div className="muted">No changes.</div>
+      )}
+    </pre>
+  </div>
+);

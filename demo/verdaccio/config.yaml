@@ -1,0 +1,25 @@
+# The local registry: the install sandbox's only reachable registry. Proxies
+# npmjs for everything except the demo package, which only exists here.
+storage: /verdaccio/storage
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+    # One account, created once with `npm adduser` (see demo/README.md).
+    max_users: 1
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+packages:
+  'tiny-util':
+    # No proxy: never fetched from npmjs, served only from local storage.
+    access: $all
+    publish: $authenticated
+  '@*/*':
+    access: $all
+    publish: $authenticated
+    proxy: npmjs
+  '**':
+    access: $all
+    publish: $authenticated
+    proxy: npmjs
+log: { type: stdout, format: pretty, level: http }

@@ -1,0 +1,22 @@
+# The one public door. DOMAIN=<vm-ip>.sslip.io gets a Let's Encrypt
+# certificate without any DNS setup.
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		Content-Security-Policy "default-src 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+	# REST and the WebSocket event stream.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle {
+		root * /srv/web
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Supply-chain guardrail: never install a release younger than a day.
+minimumReleaseAge: 1440
+
+allowBuilds:
+  esbuild: true
+  lefthook: true

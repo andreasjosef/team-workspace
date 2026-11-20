@@ -1,0 +1,375 @@
+/* App layout on top of tokens.css (the Bitverkstad style: warm, dark, flat,
+   one gold accent). Colours carry meaning only: gold = needs you / selected,
+   green = done, red = danger, blue = in progress, muted = closed. */
+@import './tokens.css';
+
+body {
+  font-size: 15px;
+}
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+h2 {
+  font-size: 1rem;
+  border: 0;
+  padding: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 1.25rem 3rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--bg-soft);
+}
+.brand {
+  font-weight: 750;
+  color: var(--text);
+  text-decoration: none;
+}
+.brand small {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 0.5rem;
+}
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+.tab {
+  padding: 0.3rem 0.8rem;
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--text);
+  text-decoration: none;
+}
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.tab.active {
+  background: var(--gold);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+.cols {
+  display: grid;
+  gap: 1.25rem;
+  align-items: start;
+}
+.cols-dev {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.cols-3 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+}
+.cols-task {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.below {
+  margin-top: 1.5rem;
+}
+@media (max-width: 1000px) {
+  .cols-dev,
+  .cols-3,
+  .cols-task {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--bg-mid);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+}
+.panel + .panel {
+  margin-top: 1rem;
+}
+/* Grid cells line up; only stacked panels get a gap. */
+.cols > .panel + .panel {
+  margin-top: 0;
+}
+.empty {
+  color: var(--faint);
+  margin: 0;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.85em;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.item {
+  display: block;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.item:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.item.selected {
+  background: var(--bg-soft);
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+.item-title {
+  display: block;
+}
+.item-meta {
+  display: block;
+  font-size: 0.82em;
+  color: var(--muted);
+}
+
+.dot {
+  font-size: 0.8em;
+  margin-right: 0.35rem;
+}
+.tone-gold {
+  color: var(--gold);
+}
+.tone-green {
+  color: var(--green);
+}
+.tone-red {
+  color: var(--red);
+}
+.tone-blue {
+  color: var(--blue);
+}
+.tone-muted {
+  color: var(--muted);
+}
+
+.chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  margin: 0 0.3rem 0.3rem 0;
+}
+
+.btn {
+  border: 0;
+  border-radius: var(--radius);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.btn:hover {
+  background: var(--bg-hover);
+}
+.btn:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+.btn-primary {
+  background: var(--gold);
+  color: var(--bg);
+  font-weight: 700;
+}
+.btn-primary:hover {
+  background: var(--gold);
+  filter: brightness(1.1);
+}
+.btn-danger {
+  color: var(--red);
+}
+
+form.stack {
+  display: grid;
+  gap: 0.6rem;
+}
+.field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.field input,
+.field textarea,
+.field select,
+.filter {
+  background: var(--bg);
+  border: 1px solid var(--bg-soft);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.6rem;
+  color: var(--text);
+}
+.field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+:is(input, textarea, select):focus {
+  outline: 1px solid var(--gold);
+  border-color: var(--gold);
+}
+.filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.6rem;
+}
+.error {
+  color: var(--red);
+  margin: 0;
+}
+
+/* Customer- or teammate-written text: shown as data, never styled as ours. */
+.untrusted {
+  border-left: 2px solid var(--faint);
+  padding: 0.3rem 0 0.3rem 0.8rem;
+  margin: 0 0 1rem;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.untrusted-label {
+  font-size: 0.78em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.doc-body p {
+  margin: 0 0 0.75rem;
+}
+
+.task-head {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+.task-head h1 {
+  font-size: 1.4em;
+  margin: 0;
+  border: 0;
+}
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0 1.25rem;
+  flex-wrap: wrap;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.2rem 0.9rem;
+  margin: 0;
+}
+.kv dt {
+  color: var(--muted);
+}
+.kv dd {
+  margin: 0;
+}
+
+.alert {
+  color: var(--red);
+}
+.alert ul {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.2rem;
+}
+
+table.iters {
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+table.iters td,
+table.iters th {
+  padding: 0.15rem 0.8rem 0.15rem 0;
+  text-align: right;
+}
+table.iters th {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.diff {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  padding: 0.5rem 0;
+  margin: 0;
+}
+.diff div {
+  padding: 0 1rem;
+  white-space: pre;
+}
+.diff .add {
+  color: var(--green);
+  background: rgba(169, 182, 101, 0.08);
+}
+.diff .del {
+  color: var(--red);
+  background: rgba(234, 105, 98, 0.08);
+}
+.diff .hunk {
+  color: var(--blue);
+}
+.diff .file {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.log {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  max-height: 26rem;
+  overflow: auto;
+}
+.log .phase {
+  margin-top: 0.5rem;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.log summary {
+  cursor: pointer;
+}
+.log pre {
+  margin: 0.2rem 0 0.4rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--muted);
+}

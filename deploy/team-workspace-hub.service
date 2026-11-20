@@ -1,0 +1,27 @@
+# /etc/systemd/system/team-workspace-hub.service
+[Unit]
+Description=Team Workspace hub
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+User=hub
+Group=hub
+WorkingDirectory=/opt/team-workspace
+EnvironmentFile=/opt/team-workspace/.env
+Environment=NODE_ENV=production
+# Node runs the TypeScript source directly; no build step.
+ExecStart=/usr/bin/node apps/hub/src/index.ts
+Restart=on-failure
+RestartSec=2
+
+# Hardening. The process can still start containers (it's in the docker
+# group, which is root-equivalent), so these mostly guard against mistakes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/team-workspace /run/docker.sock
+
+[Install]
+WantedBy=multi-user.target
