@@ -16,3 +16,17 @@ Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A hub on a 
 - Pin exact versions. `pnpm-workspace.yaml` refuses releases younger than a day.
 - Never commit secrets. `.env` is local only; real values live in the team's password manager.
 - Done means `pnpm lint && pnpm typecheck && pnpm test` pass.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are GitHub issues on `andreasjosef/team-workspace`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
