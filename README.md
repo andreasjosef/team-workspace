@@ -79,6 +79,7 @@ Not yet run end to end: the real pipeline with a live model and real sandboxes. 
 
 ## Docs
 
+- [Ticket to PR](docs/ticket-to-pr/README.md): the current idea, its definition of done, and the build specs
 - [Architecture](docs/architecture.md): trust boundaries, the task lifecycle, role policies, the containment rules and where each lives, known gaps
 - [Deploying](docs/deploying.md): the Vultr VM, step by step
 - [Demo material](demo/README.md): the shop, the incidents, the demo script
