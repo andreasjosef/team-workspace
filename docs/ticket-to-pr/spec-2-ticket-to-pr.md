@@ -21,7 +21,7 @@ When a task goes green, the hub pushes a branch and opens a pull request on GitH
 
 **Not in this spec:**
 
-- Draft PRs and "works as intended" (spec 3). This spec makes the publisher _able_ to open a draft, but only the green path uses it.
+- Draft PRs and the other outcomes (spec 3). This spec makes the publisher _able_ to open a draft, but only the green path uses it.
 - Following the PR after it opens (merged, closed). That's an open question for spec 5.
 - Keys or accounts in the hub.
 
@@ -37,7 +37,7 @@ When a task goes green, the hub pushes a branch and opens a pull request on GitH
 ### Flow after this spec
 
 ```
-CS forwards → sync hub repo from GitHub → clone into task workspace → context → baseline → fix loop
+Support rep forwards → sync hub repo from GitHub → clone into task workspace → context → baseline → fix loop
    → green → checkPatch → apply on a clean branch → push task/<id> → open PR → status pr_opened
 ```
 
@@ -61,7 +61,7 @@ The diff (`diffPaths`) already holds only the paths the agent edited. Publishing
   1. `checkPatch(policy, diff)` again. Refuse means status `error`, with the reason shown.
   2. `git worktree add` a fresh worktree from the hub repo, on a new branch `task/<id>` at the `origin/main` the task started from. Record that SHA when the task syncs.
   3. `git apply --index` the patch there (same flags as `applyToHub`), then commit with a fixed template:
-     - Message: `fix: <sanitised title> (<incident id>)`.
+     - Message: `fix: <sanitised title> (<report id>)`.
      - Author: the existing hub identity.
      - No `--no-verify` needed: hooks are already off.
   4. `git push origin task/<id>`.
@@ -76,7 +76,7 @@ The diff (`diffPaths`) already holds only the paths the agent edited. Publishing
 - `POST /repos/{owner}/{repo}/pulls` with Node's `fetch`. Fields: `head: task/<id>`, `base: main`, `title`, `body`, `draft` (false here; spec 3 uses true).
 - The result goes on the stream as a new event `{ type: 'pr', url, number, draft }`, then `{ type: 'status', status: 'pr_opened' }`.
 - **API errors** (422 if the branch already has a PR, 401, rate limit) mean status `error` with a short reason. The branch stays pushed, so a dev can open the PR by hand.
-- **Labels:** add `from-support` (and the incident id if there is one), so devs can filter. Create the label once during setup. The API call is a nice-to-have; skip it if it fails.
+- **Labels:** add `from-support` (and the report id if there is one), so devs can filter. Create the label once during setup. The API call is a nice-to-have; skip it if it fails.
 
 ### 4. The PR body is the receipt
 
@@ -184,13 +184,13 @@ The orchestrator branch also used `GITHUB_REPO_URL`. We use `owner/name` and bui
 
 ## Risks
 
-| Risk                                                    | Fallback                                                                                                       |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Token owner is an org admin and bypass slips through    | Use a separate bot GitHub account as the token owner, with write access only. Cleanest anyway.                 |
-| GitHub API down or rate-limited during the demo         | Branch still pushed. Show the branch, or record a backup video.                                                |
-| PR body too long (big receipts)                         | Cap the command output sections. Link to the hub's receipt page for the rest.                                  |
-| Duplicate PRs when the same incident is forwarded twice | Fine for the demo. Later: look for an open PR with that incident's label first.                                |
-| The hub's `main` is reset under a running task          | Can't happen: tasks clone under the mutex, and publishing uses the recorded `baseSha`, not the current `main`. |
+| Risk                                                  | Fallback                                                                                                       |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Token owner is an org admin and bypass slips through  | Use a separate bot GitHub account as the token owner, with write access only. Cleanest anyway.                 |
+| GitHub API down or rate-limited during the demo       | Branch still pushed. Show the branch, or record a backup video.                                                |
+| PR body too long (big receipts)                       | Cap the command output sections. Link to the hub's receipt page for the rest.                                  |
+| Duplicate PRs when the same report is forwarded twice | Fine for the demo. Later: look for an open PR with that report's label first.                                  |
+| The hub's `main` is reset under a running task        | Can't happen: tasks clone under the mutex, and publishing uses the recorded `baseSha`, not the current `main`. |
 
 ## Open questions
 

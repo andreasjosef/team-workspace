@@ -9,16 +9,16 @@ The agent part of the flow runs for real: live model, real gVisor sandboxes, on 
 **Done when:**
 
 - INC-1042 (discount bug) goes from a red reproduction test to green and ends **`proposed`** with a diff ready to become a pull request. With `RUNNER=real` on the VM. (Spec 2 turns that diff into the PR.)
-- INC-1043 (hostile ticket) ends **flagged**, every time. We've written down which containment layers fire with the live model. That's the input for spec 4.
+- INC-1043 (the hostile report) ends **flagged**, every time. We've written down which containment layers fire with the live model. That's the input for spec 4.
 - We know the wall-clock time of each run, and it fits the 3-minute demo (target: INC-1042 under about 60 s, see [Speed](#speed)).
 - `pnpm lint && pnpm typecheck && pnpm test` pass, and `docs/deploying.md` matches what we actually did.
 
 **Not in this track:**
 
 - Pushing branches and opening PRs (spec 2).
-- The three outcomes (spec 3).
+- The five outcomes (spec 3).
 - The halt rule and the "what if the model obeyed?" run (spec 4).
-- The CS view (spec 5).
+- The support view (spec 5).
 - Persistence: tasks stay in memory.
 
 ## Where `main` stands
@@ -49,7 +49,7 @@ Known issues, from reading `main` and from what Henrik hit on his branch:
 | Model writes `node:test` instead of Vitest for the reproduction test                                                 | `packages/agent/src/prompt.ts`                                                                                      | Henrik's `a0aa9f2` adds one line to the prompt                                                                  |
 | Decision front matter fails to parse with CRLF line endings                                                          | `packages/agent/src/context.ts`, `parseDoc`                                                                         | Branch diff normalises `\r\n`                                                                                   |
 | ANSI colour codes in tool output can confuse the error counters                                                      | `check()` output                                                                                                    | Branch strips ANSI and sets `NO_COLOR=1`                                                                        |
-| **The live model refuses the hostile ticket outright** (empty edits), so the policy and network layers never fire    | `pipeline.ts` fix loop                                                                                              | Henrik's `8ccd50a` / `73b3a28`: halt as flagged when the scanner flags the input and the model returns no edits |
+| **The live model refuses the hostile report outright** (empty edits), so the policy and network layers never fire    | `pipeline.ts` fix loop                                                                                              | Henrik's `8ccd50a` / `73b3a28`: halt as flagged when the scanner flags the input and the model returns no edits |
 
 The last row matters most for the demo, but it belongs to spec 4. This track only makes sure INC-1043 reliably ends flagged and records what happened. See [INC-1043 in this track](#inc-1043-in-this-track).
 
@@ -94,7 +94,7 @@ Each one is a small commit that can be tested on a laptop with podman/Docker, wi
 
 ### Step 4 – Run INC-1042 for real
 
-- Reset the hub repo (`git reset --hard demo-start`) and run it from the CS view.
+- Reset the hub repo (`git reset --hard demo-start`) and run it from the support view.
 - Expected curve (from `demo/README.md`): 0 failing, then 1 failing (reproduction test), then 0 failing. D-014 is in the context.
 - **Record:** total time, iterations, time per sandbox run, tokens if the inference API reports them.
 - Check the task ends `proposed`, and the diff holds only the reproduction test and `src/checkout/discount.ts`.
@@ -124,7 +124,7 @@ Henrik's experience suggests the model refuses outright. Confirming that with ou
 
 ## Speed
 
-The demo gives the CS fix about 60 seconds of talking. Rough budget to measure against in step 4:
+The demo gives the fixed outcome about 60 seconds of talking. Rough budget to measure against in step 4:
 
 | Step           | Rough cost           | After this track       |
 | -------------- | -------------------- | ---------------------- |
