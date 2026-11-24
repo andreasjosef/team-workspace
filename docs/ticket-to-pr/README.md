@@ -148,7 +148,7 @@ In build order. Each one gets its own note with goal, done-when and steps.
 2. **Ticket to PR.** [Spec 2](spec-2-ticket-to-pr.md). GitHub sync before each task, push `task/<id>`, open a PR with the receipt as the body. Scoped token, branch protection, no in-hub approval.
 3. **Outcomes.** How a task arrives at one of the five outcomes, in precedence order. New statuses in `packages/shared`, the two-part scope (tests wide, code narrow), a decision-based answer for the support rep, and three more demo reports (annual pricing, a billing bug, a vague one).
 4. **Containment beat.** The halt rule (scanner flags + model refuses → flagged) and the "what if the model obeyed?" fixture through the real policy and sandbox.
-5. **Support view.** Outcome in plain words, PR link, receipt. Remove the PO and dev views.
+5. **Support view and cleanup.** Outcome in plain words, PR link, receipt. Then remove what the first version needed and this one doesn't: the PO and dev views, the `po` and `dev` role files and prompts, the `approval` field in role policies, `PREVIEW_BASE_URL` and the `preview` phase, the mock runner's signup-copy scenario, and the `Incident` → report rename.
 
 ## What not to claim
 
