@@ -14,6 +14,7 @@ import {
   scanTaskInput,
   type CheckCounts,
   type CheckOutcome,
+  type Edit,
   type Inference,
 } from '@app/agent';
 import { fail, ok, type Result } from '@app/shared';
@@ -26,7 +27,7 @@ import {
   type runInSandbox,
   type SandboxConfig,
 } from '@app/sandbox';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { reloadHub, type Hub } from '../hub/load.ts';
 import {
@@ -302,17 +303,42 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   emit({ type: 'phase', phase: 'fix' });
   let refusals = 0;
   const touched = new Set<string>();
+  const checkRoleScope = (edits: Edit[]): Result<null> => {
+    const verdict = checkPolicy(policy, edits);
+    if (verdict.ok) return ok(null);
+    for (const r of verdict.refusals)
+      emit({ type: 'policy_refused', path: r.path, rule: r.rule });
+    refusals += verdict.refusals.length;
+    return fail(
+      'forbidden',
+      verdict.refusals.map((r) => `${r.path}: ${r.rule}`).join('; ')
+    );
+  };
   const outcome = await runTaskLoop({
     baseline,
     check,
     first,
+    // A bug is reproduced before it's fixed. The kind is the validated task
+    // kind the role picked, not anything read from the task text.
+    reproduceFirst: input.kind === 'bug',
+    // A path that couldn't be taken out stays in `touched`: it may still be
+    // in the worktree, so it stays in the diff for the reviewer to see.
+    discard: async (paths: string[]) => {
+      const left: string[] = [];
+      for (const path of paths) {
+        const removed = await removeInside(ws.repo, path);
+        if (removed.success) touched.delete(path);
+        else left.push(removed.message);
+      }
+      return left.length ? fail('invalid', left.join('; ')) : ok(null);
+    },
     halt: () =>
       networkAttempt
         ? 'A test run tried to reach the network'
         : refusals >= MAX_REFUSALS
           ? `${refusals} edits refused by the ${policy.label} policy`
           : null,
-    propose: async ({ latest, lastRejection }) => {
+    propose: async ({ latest, lastRejection, step, reproduction }) => {
       const paths = [
         ...new Set([
           ...contextFiles,
@@ -334,21 +360,19 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           files,
           errors: touched.size ? latest.errors : '',
           ...(lastRejection ? { lastRejection } : {}),
+          ...(step ? { step } : {}),
+          ...(reproduction ? { reproduction } : {}),
         })
       );
       return reply.success ? parseEditsResponse(reply.value) : reply;
     },
+    // The loop runs this on every answer, before a bug's step rule; apply
+    // runs it again before writing. An answer that passed once passes again,
+    // so each refusal is emitted and counted once.
+    checkScope: checkRoleScope,
     apply: async (edits) => {
-      const verdict = checkPolicy(policy, edits);
-      if (!verdict.ok) {
-        for (const r of verdict.refusals)
-          emit({ type: 'policy_refused', path: r.path, rule: r.rule });
-        refusals += verdict.refusals.length;
-        return fail(
-          'forbidden',
-          verdict.refusals.map((r) => `${r.path}: ${r.rule}`).join('; ')
-        );
-      }
+      const scope = checkRoleScope(edits);
+      if (!scope.success) return scope;
       const applied = await applyEdits(ws.repo, edits);
       if (!applied.success) return applied;
       for (const e of edits) touched.add(e.path);
@@ -377,6 +401,19 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
+  // A flagged report never ends proposed, even when the checks are green: a
+  // model that refused the report's instructions still produced a change
+  // nobody asked for in good faith. Decided on host facts only (the scanner's
+  // signals and the loop's outcome), never on the text. Spec 4 owns the full
+  // halt rule; see docs/ticket-to-pr/README.md, "Open questions".
+  if (signals.length) {
+    emit({
+      type: 'status',
+      status: 'flagged',
+      reason: `The report carried instructions (${signals.join(', ')}), so the change was not proposed`,
+    });
+    return;
+  }
   // TODO(sandbox track): start a preview container from this worktree and
   // emit { type: 'preview', url }. See docs/architecture.md, "Previews".
   emit({
@@ -392,4 +429,22 @@ const readInside = async (root: string, path: string) => {
   const s = await lstat(resolved.value);
   if (!s.isFile() || s.size > 100_000) return null;
   return readFile(resolved.value, 'utf8');
+};
+
+// Takes out a file the agent created (a reproduction that didn't fail). Only
+// a regular file, reached without following a symlink (resolveInside refuses
+// a symlink anywhere on the path, parent folders included): a test run could
+// have swapped it for anything since. Already gone counts as taken out.
+const removeInside = async (
+  root: string,
+  path: string
+): Promise<Result<null>> => {
+  const resolved = await resolveInside(root, path);
+  if (!resolved.success)
+    return resolved.code === 'not_found' ? ok(null) : resolved;
+  const s = await lstat(resolved.value);
+  if (!s.isFile())
+    return fail('invalid', `Not a regular file, left in place: ${path}`);
+  await rm(resolved.value);
+  return ok(null);
 };

@@ -71,6 +71,10 @@ export const defaultGuardrails: Guardrails = {
 // add a new test (a bug task starts by reproducing the bug), but may not make
 // tests pass by changing existing ones.
 const TEST_FILE = /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+// Models sometimes answer with Windows separators; every path rule compares
+// the forward-slash form.
+export const slashPath = (path: string) => path.replaceAll('\\', '/');
+export const isTestPath = (path: string) => TEST_FILE.test(slashPath(path));
 const PROTECTED =
   /(^|\/)(node_modules|\.git)(\/|$)|(^|\/)(package-lock\.json|pnpm-lock\.yaml)$/;
 
@@ -88,12 +92,12 @@ export const checkGuardrails = (
   limits: Guardrails = defaultGuardrails
 ): Result<null> => {
   for (const e of edits) {
-    const path = e.path.replaceAll('\\', '/');
+    const path = slashPath(e.path);
     if (PROTECTED.test(path)) {
       return fail('invalid', `Editing ${e.path} is not allowed`);
     }
     if (isCreate(e)) continue;
-    if (TEST_FILE.test(path)) {
+    if (isTestPath(path)) {
       return fail(
         'invalid',
         `Changing existing tests is not allowed: ${e.path}`
