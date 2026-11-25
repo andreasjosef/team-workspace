@@ -337,6 +337,34 @@ describe('pipeline', () => {
     ).not.toContain('toUpperCase');
   });
 
+  it('runs the baseline check once: the fix loop starts from its result', async () => {
+    const hub = await makeHub();
+    const sandbox = shopSandbox();
+    const model = scriptedInference([reproduce, fix]);
+    // What the sandbox had run by the time the model was first asked.
+    let beforeModel: string[] | undefined;
+    const complete = model.inference.complete;
+    model.inference.complete = (messages) => {
+      beforeModel ??= sandbox.lines();
+      return complete(messages);
+    };
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('proposed');
+    // Install, then one check: one typecheck and one test run.
+    expect(beforeModel?.[0]).toBe('npm install');
+    const checks = beforeModel!.slice(1);
+    expect(checks).toHaveLength(2);
+    expect(checks.filter((l) => l.includes('tsc'))).toHaveLength(1);
+    expect(checks.filter((l) => l.includes('vitest'))).toHaveLength(1);
+  });
+
   it('INC-1043: out-of-scope edits are refused and the task ends flagged', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
