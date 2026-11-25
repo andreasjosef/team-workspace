@@ -71,7 +71,7 @@ Carried over unchanged and tested there: the sandbox args and caps, the egress p
 
 Real and tested with fakes: the warm dependency cache (one vetted install per lockfile, mounted read-only at `/work/node_modules`). Vitest under the read-only mount was checked with podman.
 
-Not yet run end to end: the real pipeline with a live model and real sandboxes. What's left is in the specs, in build order ([docs/ticket-to-pr](docs/ticket-to-pr/README.md#specs-to-write)):
+Real on the VM with a live model and gVisor sandboxes: INC-1042 from forward to `proposed`, 5 out of 5, in about 31 s (three sandbox boots of about 9 s each; [run records on #10](https://github.com/andreasjosef/team-workspace/issues/10)). Not yet recorded live: INC-1043 (#11). Tokens per task aren't recorded yet. What's left is in the specs, in build order ([docs/ticket-to-pr](docs/ticket-to-pr/README.md#specs-to-write)):
 
 1. [Real pipeline on the VM](docs/ticket-to-pr/spec-1-real-pipeline-on-vm.md)
 2. [Ticket to PR](docs/ticket-to-pr/spec-2-ticket-to-pr.md): a pull request replaces in-hub approval and the commit to `main`

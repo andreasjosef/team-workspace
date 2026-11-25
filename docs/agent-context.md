@@ -37,6 +37,7 @@ Newest first. Each entry: what we saw, the evidence, what we changed.
 - **Seen:** in every live INC-1042 run on the VM (4 of 4), the model's first answer tried to create `src/checkout/discount.test.ts`, which already exists. The guardrail refused it ("Already exists, edit it instead"), so every run spent one iteration and showed the curve 0, 0, 2, 0 instead of 0, 2, 0. Cost about 1.5 s per run (no sandbox boot), but the curve reads badly in the demo.
 - **Cause:** the files in context exclude tests, so the model couldn't know the conventional name was taken.
 - **Change:** the reproduce step line lists tracked test files in the same folders as the context files, and asks for a new file name.
+- **Result:** the first run on the change created a new test file straight away: curve 0, 1, 0, three model calls down to two, no refusal. One run so far; watch it in the next ones.
 - **Evidence:** run records on #10.
 
 ### Earlier (spec 1)
