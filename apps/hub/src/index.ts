@@ -1,5 +1,10 @@
 import { createInference } from '@app/agent';
-import { removeLeftoverSandboxes, sandboxConfigFromEnv } from '@app/sandbox';
+import {
+  fetchDenied,
+  removeLeftoverSandboxes,
+  runInSandbox,
+  sandboxConfigFromEnv,
+} from '@app/sandbox';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { buildApp } from './app.ts';
@@ -26,6 +31,8 @@ if (env.RUNNER === 'real') {
   runner = createPipeline({
     hub,
     sandbox,
+    runInSandbox,
+    fetchDenied,
     inference: createInference({
       baseUrl: env.INFERENCE_BASE_URL,
       apiKey: env.VULTR_INFERENCE_API_KEY!,
