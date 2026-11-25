@@ -57,6 +57,13 @@ describe('one run per check', () => {
     expect(script).not.toContain('npx');
   });
 
+  it('keeps Vitest from writing into a read-only node_modules', () => {
+    const [, , script] = checkCommand();
+    expect(script).toContain(
+      './node_modules/.bin/vitest run --configLoader runner --no-cache'
+    );
+  });
+
   it('splits what the built command prints back into both tools', async () => {
     // Stub tools, written here, in a temp dir: the real command, run by sh,
     // against stand-ins for tsc and vitest.

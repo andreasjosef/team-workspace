@@ -55,6 +55,12 @@ export const stripAnsi = (s: string) => s.replace(ANSI, '');
 // frame each tool's output and carry its exit code. stderr goes to stdout so
 // the two streams can't reorder around a marker. The shape is Henrik's
 // `runSandboxChecks` (5c303df).
+//
+// node_modules may be the read-only dependency cache, and Vitest writes into
+// it by default: its results cache (node_modules/.vite/vitest) and, for a
+// TypeScript config file, the bundled config (node_modules/.vite-temp, a hard
+// failure). `--no-cache` drops the first, `--configLoader runner` loads the
+// config without a temp file. Checked with podman on a read-only mount.
 
 const MARK = 'TW-CHECK';
 
@@ -68,7 +74,7 @@ export const checkCommand = (): string[] => [
     './node_modules/.bin/tsc --noEmit --pretty false',
     `printf '\\n${MARK} tsc EXIT %s\\n' "$?"`,
     `printf '\\n${MARK} vitest START\\n'`,
-    './node_modules/.bin/vitest run',
+    './node_modules/.bin/vitest run --configLoader runner --no-cache',
     `printf '\\n${MARK} vitest EXIT %s\\n' "$?"`,
   ].join('; '),
 ];

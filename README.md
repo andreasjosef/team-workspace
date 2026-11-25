@@ -49,7 +49,7 @@ The real runner needs the product repo as a git repository, because tasks branch
 cp -r demo/shop /tmp/shop && git -C /tmp/shop init -q -b main && git -C /tmp/shop add . && git -C /tmp/shop commit -qm init
 ```
 
-Then in `.env`: `RUNNER=real`, `HUB_REPO_DIR=/tmp/shop`, `VULTR_INFERENCE_API_KEY`, `INFERENCE_MODEL`, `TASKS_DIR=.tasks`. With rootless podman on Fedora also set `SANDBOX_DOCKER_BIN=podman`, `SANDBOX_VOLUME_OPTS=rw,Z` and `SANDBOX_EXTRA_ARGS=--userns=keep-id`.
+Then in `.env`: `RUNNER=real`, `HUB_REPO_DIR=/tmp/shop`, `VULTR_INFERENCE_API_KEY`, `INFERENCE_MODEL`, `TASKS_DIR=.tasks`, `DEPS_CACHE_DIR=.deps`. With rootless podman on Fedora also set `SANDBOX_DOCKER_BIN=podman`, `SANDBOX_VOLUME_OPTS=rw,z` (lower-case: the dependency cache is shared between sandboxes) and `SANDBOX_EXTRA_ARGS=--userns=keep-id`.
 
 ## Commands
 
@@ -68,6 +68,8 @@ Needs Node 24+, pnpm (via corepack), and Docker or podman for the real runner.
 Real and tested: the contract; role policies and their enforcement (globs, deny wins, `.hub/` never writable, size caps); the input scanner and untrusted-text wrapping; the context builder (files ranked by keywords, decisions linked to files); edits that create files, with guardrails and symlink-safe paths; the task loop (needs an applied proposal, halts on refusals or a network attempt); approvals checked against the role policy; the hub API with the WebSocket stream and replay; the git plumbing for task branches, touched-paths-only diffs and applying to `main` (tested against a real throwaway repo); the mock runner; the three role views. The demo shop's bug and fix were checked by hand: 5 tests pass, the reproduction test fails, the fix makes all 6 pass.
 
 Carried over unchanged and tested there: the sandbox args and caps, the egress proxy, the install-script scanner.
+
+Real and tested with fakes: the warm dependency cache (one vetted install per lockfile, mounted read-only at `/work/node_modules`). Vitest under the read-only mount was checked with podman.
 
 Not yet run end to end: the real pipeline with a live model and real sandboxes. What's left is in the specs, in build order ([docs/ticket-to-pr](docs/ticket-to-pr/README.md#specs-to-write)):
 

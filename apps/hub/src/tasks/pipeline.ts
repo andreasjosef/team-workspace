@@ -19,6 +19,7 @@ import {
 import { fail, ok } from '@app/shared';
 import {
   scanInstallScripts,
+  type ExtraMount,
   type fetchDenied,
   type NetworkMode,
   type runInSandbox,
@@ -26,6 +27,14 @@ import {
 } from '@app/sandbox';
 import { lstat, readFile } from 'node:fs/promises';
 import { reloadHub, type Hub } from '../hub/load.ts';
+import {
+  createScratch,
+  findEntry,
+  prepareMountPoint,
+  promoteScratch,
+  readLockfile,
+  removeScratch,
+} from './depsCache.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 import {
   applyToHub,
@@ -58,6 +67,8 @@ export type PipelineDeps = {
   fetchDenied: DeniedLogFetch;
   inference: Inference;
   tasksDir: string;
+  // Warm node_modules, one per lockfile hash (depsCache.ts).
+  depsCacheDir: string;
   egressAdminUrl: string;
   keepWorkspaces: boolean;
 };
@@ -114,11 +125,19 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const { id, input, policy, emit, setDiff } = task;
   const text = `${input.title}\n${input.text}`;
 
-  const run = async (cmd: string[], network: NetworkMode) => {
+  // Set once the dependencies come from the cache: every later run sees them
+  // read-only at /work/node_modules.
+  let mounts: ExtraMount[] = [];
+  const run = async (
+    cmd: string[],
+    network: NetworkMode,
+    workdir: string = ws.repo
+  ) => {
     const r = await deps.runInSandbox(deps.sandbox, cmd, {
-      workdir: ws.repo,
+      workdir,
       network,
       labels: { 'team-workspace.task': id },
+      ...(mounts.length ? { extraMounts: mounts } : {}),
     });
     emit({
       type: 'command',
@@ -154,48 +173,75 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     decisions: decisions.map((d) => ({ id: d.id, title: d.title })),
   });
 
-  // Baseline: install with registry-only network, then check with none.
+  // Baseline: install with registry-only network (or reuse a cached install
+  // of the same lockfile), then check with none.
   emit({ type: 'phase', phase: 'baseline' });
-  const hasLock =
-    (await lstat(`${ws.repo}/package-lock.json`).catch(() => null)) !== null;
-  const since = Date.now();
-  const installed = await run(
-    hasLock ? ['npm', 'ci'] : ['npm', 'install'],
-    'registry'
-  );
-  const denied = await deps
-    .fetchDenied(deps.egressAdminUrl, since)
-    .catch(() => []);
-  for (const d of denied)
-    emit({
-      type: 'blocked',
-      kind: 'network',
-      detail: `${d.method} ${d.target}`,
-    });
-  if (installed.exitCode !== 0 || denied.length) {
-    emit({
-      type: 'status',
-      status: 'error',
-      reason: 'Installing dependencies failed or tried to reach the network',
-    });
-    return;
-  }
-  // What the install left in node_modules, read on the host, never run.
-  const flagged = (await scanInstallScripts(ws.repo)).filter(
-    (s) => s.suspicious
-  );
-  for (const s of flagged)
-    emit({
-      type: 'log',
-      message: `Install script flagged: ${s.pkg} ${s.hook} (${s.reasons.join(', ')}): ${tail(s.script, 500)}`,
-    });
-  if (flagged.length) {
-    emit({
-      type: 'status',
-      status: 'error',
-      reason: `Suspicious install script in ${[...new Set(flagged.map((s) => s.pkg))].join(', ')}`,
-    });
-    return;
+  const endWithError = (reason: string) => {
+    emit({ type: 'status', status: 'error', reason });
+    return false;
+  };
+  // One install in `workdir`, vetted: exit code, the proxy's denied log, and
+  // what the install left in its node_modules (read on the host, never run).
+  const install = async (cmd: string[], workdir: string) => {
+    const since = Date.now();
+    const installed = await run(cmd, 'registry', workdir);
+    const denied = await deps
+      .fetchDenied(deps.egressAdminUrl, since)
+      .catch(() => []);
+    for (const d of denied)
+      emit({
+        type: 'blocked',
+        kind: 'network',
+        detail: `${d.method} ${d.target}`,
+      });
+    if (installed.exitCode !== 0 || denied.length)
+      return endWithError(
+        'Installing dependencies failed or tried to reach the network'
+      );
+    const flagged = (await scanInstallScripts(workdir)).filter(
+      (s) => s.suspicious
+    );
+    for (const s of flagged)
+      emit({
+        type: 'log',
+        message: `Install script flagged: ${s.pkg} ${s.hook} (${s.reasons.join(', ')}): ${tail(s.script, 500)}`,
+      });
+    if (flagged.length)
+      return endWithError(
+        `Suspicious install script in ${[...new Set(flagged.map((s) => s.pkg))].join(', ')}`
+      );
+    return true;
+  };
+
+  const lock = await readLockfile(ws.repo);
+  if (!lock) {
+    // No lockfile, nothing to key a cache by: install into the worktree.
+    if (!(await install(['npm', 'install'], ws.repo))) return;
+  } else {
+    let entry = await findEntry(deps.depsCacheDir, lock.key);
+    if (entry) {
+      emit({
+        type: 'log',
+        message: `Dependencies from the cache (lockfile ${lock.key.slice(0, 12)})`,
+      });
+    } else {
+      // A miss: install in a scratch folder, and only a vetted install
+      // becomes an entry. On any failure the scratch folder goes and the
+      // cache is left as it was.
+      const scratch = await createScratch(deps.depsCacheDir, lock);
+      try {
+        if (!(await install(['npm', 'ci'], scratch))) return;
+        entry = await promoteScratch(deps.depsCacheDir, lock.key, scratch);
+      } finally {
+        await removeScratch(scratch);
+      }
+      emit({
+        type: 'log',
+        message: `Dependencies installed and cached (lockfile ${lock.key.slice(0, 12)})`,
+      });
+    }
+    await prepareMountPoint(ws.repo);
+    mounts = [{ source: entry, target: '/work/node_modules', readonly: true }];
   }
 
   let networkAttempt: string | null = null;

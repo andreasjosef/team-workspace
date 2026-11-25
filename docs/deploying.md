@@ -52,6 +52,7 @@ In `.env`:
 | `VULTR_INFERENCE_API_KEY` | from the password manager; type it in the editor, never on the command line |
 | `INFERENCE_MODEL`         | the model picked from `/v1/models`                                          |
 | `SANDBOX_RUNTIME`         | `runsc` if the setup script said gVisor works                               |
+| `DEPS_CACHE_DIR`          | `/var/lib/team-workspace/deps` (the default; the setup script creates it)   |
 | `DOMAIN`                  | `<vm-ip>.sslip.io`: a real certificate with no DNS setup                    |
 | `NODE_ENV`                | `production`                                                                |
 
@@ -84,4 +85,14 @@ sudo -u hub git pull
 sudo -u hub corepack pnpm install --frozen-lockfile
 sudo -u hub corepack pnpm --filter @app/web build      # Caddy serves the new dist at once
 sudo systemctl restart team-workspace-hub              # forgets in-memory tasks
+```
+
+## Dependency cache
+
+Each task with a `package-lock.json` reuses the `node_modules` installed for the same lockfile, from `DEPS_CACHE_DIR/<sha256 of the lockfile>`, mounted read-only into its sandboxes. The first task with a new lockfile installs in a sandbox with registry-only network, and only an install that passed the denied-log check and the install-script scanner is moved into the cache. A task whose lockfile changed gets a fresh install. To empty the cache (e.g. after a Verdaccio reset):
+
+```sh
+sudo systemctl stop team-workspace-hub
+sudo rm -rf /var/lib/team-workspace/deps/*
+sudo systemctl start team-workspace-hub
 ```

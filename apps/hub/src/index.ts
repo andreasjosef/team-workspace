@@ -11,6 +11,7 @@ import { buildApp } from './app.ts';
 import { loadEnv } from './env.ts';
 import { loadHub } from './hub/load.ts';
 import { createMockRunner } from './tasks/mockRunner.ts';
+import { removeLeftoverScratch } from './tasks/depsCache.ts';
 import { createPipeline } from './tasks/pipeline.ts';
 import type { TaskRunner } from './tasks/runner.ts';
 
@@ -26,6 +27,11 @@ if (env.RUNNER === 'real') {
   // Absolute: it becomes a bind-mount source for every sandbox.
   const tasksDir = resolve(env.TASKS_DIR);
   await mkdir(tasksDir, { recursive: true });
+  // Absolute too: cache entries are mounted at /work/node_modules.
+  const depsCacheDir = resolve(env.DEPS_CACHE_DIR);
+  await mkdir(depsCacheDir, { recursive: true });
+  const scratch = await removeLeftoverScratch(depsCacheDir);
+  if (scratch) console.log(`Removed ${scratch} unfinished dependency installs`);
   const removed = await removeLeftoverSandboxes(sandbox);
   if (removed) console.log(`Removed ${removed} leftover sandbox containers`);
   runner = createPipeline({
@@ -39,6 +45,7 @@ if (env.RUNNER === 'real') {
       model: env.INFERENCE_MODEL!,
     }),
     tasksDir,
+    depsCacheDir,
     egressAdminUrl: env.EGRESS_ADMIN_URL,
     keepWorkspaces: env.KEEP_WORKSPACES,
   });

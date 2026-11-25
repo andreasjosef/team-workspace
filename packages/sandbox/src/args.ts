@@ -22,6 +22,14 @@ export const defaultLimits: Limits = {
   tmpSize: '512m',
 };
 
+// A host directory bind-mounted into the sandbox besides /work, e.g. the
+// warm dependency cache at /work/node_modules (read-only).
+export type ExtraMount = {
+  source: string;
+  target: string;
+  readonly: boolean;
+};
+
 export type RunSpec = {
   name: string;
   // Host directory mounted at /work: the only thing the sandbox can change.
@@ -30,9 +38,18 @@ export type RunSpec = {
   limits: Limits;
   // Labels let the hub find and remove leftovers after a crash.
   labels?: Record<string, string>;
+  extraMounts?: ExtraMount[];
 };
 
 export const SANDBOX_LABEL = 'team-workspace.sandbox';
+
+// The configured bind options with the access mode swapped: `rw,z` becomes
+// `ro,z`, so SELinux relabelling still applies to a read-only mount.
+const mountOptions = (volumeOptions: string, readonly: boolean) =>
+  [
+    readonly ? 'ro' : 'rw',
+    ...volumeOptions.split(',').filter((o) => o && o !== 'rw' && o !== 'ro'),
+  ].join(',');
 
 // The whole containment policy, as a pure function: easy to read, easy to
 // test, and the one place to change it. No secrets go in here, ever: the
@@ -82,6 +99,10 @@ export const buildRunArgs = (
     `/tmp:rw,exec,nosuid,size=${limits.tmpSize}`,
     '--volume',
     `${spec.workdir}:/work:${config.volumeOptions}`,
+    ...(spec.extraMounts ?? []).flatMap((m) => [
+      '--volume',
+      `${m.source}:${m.target}:${mountOptions(config.volumeOptions, m.readonly)}`,
+    ]),
     '--workdir',
     '/work',
     '--memory',
