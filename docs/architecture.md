@@ -49,7 +49,7 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 
 ## A task
 
-One task is one request from one role, and it ends proposed (green, waiting for approval), gave up, flagged, or errored. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
+One task is one request from one role, and it ends proposed (green, waiting for approval), gave up, flagged, or errored. A task whose text the input scanner flagged never ends proposed: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
 
 | Phase    | Where   | Network             | What                                                                                                                                       |
 | -------- | ------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |

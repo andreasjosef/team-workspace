@@ -377,6 +377,19 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
+  // A flagged report never ends proposed, even when the checks are green: a
+  // model that refused the report's instructions still produced a change
+  // nobody asked for in good faith. Decided on host facts only (the scanner's
+  // signals and the loop's outcome), never on the text. Spec 4 owns the full
+  // halt rule; see docs/ticket-to-pr/README.md, "Open questions".
+  if (signals.length) {
+    emit({
+      type: 'status',
+      status: 'flagged',
+      reason: `The report carried instructions (${signals.join(', ')}), so the change was not proposed`,
+    });
+    return;
+  }
   // TODO(sandbox track): start a preview container from this worktree and
   // emit { type: 'preview', url }. See docs/architecture.md, "Previews".
   emit({
