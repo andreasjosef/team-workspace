@@ -68,7 +68,10 @@ const makeHub = async (
     recursive: true,
     filter: (src) => !src.includes('node_modules'),
   });
-  for (const [path, content] of Object.entries(files)) {
+  // demo/shop ships a lockfile (the VM's cache path). Tests start from the
+  // uncached install unless they pass a lockfile of their own.
+  const overrides = { 'package-lock.json': null, ...files };
+  for (const [path, content] of Object.entries(overrides)) {
     const full = join(repoDir, path);
     if (content === null) await rm(full, { force: true });
     else {
