@@ -27,9 +27,11 @@ main() {
   old=$(as_hub git rev-parse HEAD)
 
   if [[ $# -gt 0 ]]; then
+    # Never let the argument read as an option, to git or anything after it.
+    [[ $1 != -* ]] || { echo "Not a branch name: $1" >&2; exit 1; }
     as_hub git check-ref-format --branch "$1" >/dev/null
     as_hub git fetch origin
-    as_hub git checkout "$1"
+    as_hub git checkout "$1" -- # the trailing -- keeps $1 a branch, never a path
   fi
   as_hub git pull --ff-only
   new=$(as_hub git rev-parse HEAD)
@@ -57,6 +59,8 @@ main() {
   # Picks up egress proxy, Verdaccio or Caddy changes; a no-op otherwise.
   docker compose --env-file .env --profile vm up -d --build
 
+  # Printed before the health wait, so a failed update still says what it ran.
+  echo "Updating $old -> $new ($(as_hub git rev-parse --abbrev-ref HEAD))"
   systemctl restart "$SERVICE" # forgets in-memory tasks
   local i
   for i in $(seq 30); do
@@ -70,8 +74,10 @@ main() {
   done
 
   echo "$new" >"$STATE.tmp" && mv "$STATE.tmp" "$STATE"
-  echo "Updated $old -> $new ($(as_hub git rev-parse --abbrev-ref HEAD)). Hub is healthy."
+  echo "Updated $old -> $new. Hub is healthy."
 }
 
 main "$@"
+# The pull may have rewritten this file; bash reads a script as it runs, so
+# stop here rather than read whatever now sits past this point.
 exit
