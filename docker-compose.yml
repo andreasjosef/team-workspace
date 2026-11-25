@@ -25,7 +25,12 @@ services:
     restart: unless-stopped
     environment:
       ALLOW: verdaccio:4873
-    networks: [sandbox, egress]
+    networks:
+      sandbox:
+        # Static IP so gVisor (runsc) sandboxes reach the proxy without relying
+        # on Docker's embedded 127.0.0.11 DNS inside an internal network.
+        ipv4_address: 172.28.0.2
+      egress: {}
     # The denied-request log, for the hub. Loopback only.
     ports: ['127.0.0.1:8081:8081']
 
@@ -33,7 +38,7 @@ services:
     image: docker.io/library/caddy:2-alpine
     profiles: [vm]
     restart: unless-stopped
-    # Host network: Caddy proxies /api to the hub on 127.0.0.1:3000.
+    # Host network: Caddy proxies /api and /mcp to the hub on 127.0.0.1:3000.
     network_mode: host
     environment:
       DOMAIN: ${DOMAIN:-localhost}
@@ -47,6 +52,9 @@ networks:
   sandbox:
     name: sandbox
     internal: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
   egress:
     name: team-workspace-egress
 

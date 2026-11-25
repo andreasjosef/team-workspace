@@ -54,7 +54,7 @@ One task is one request from one role, and it ends proposed (green, waiting for 
 | Phase    | Where   | Network             | What                                                                                                                                       |
 | -------- | ------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions       |
-| baseline | sandbox | registry only       | Install, then typecheck + tests with **no network**; records the starting counts                                                           |
+| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts        |
 | fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug starts with a new failing test. Halts on 3 refusals or a network attempt |
 | preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                   |
 | deploy   | host    | GitHub (todo)       | After approval only: `checkPatch` again, `git apply --index` + commit on the hub repo, reload docs                                         |
@@ -89,12 +89,22 @@ Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `
 | Write scope        | Role policy on every edit, all or nothing; every refusal is a `policy_refused` event; 3 refusals flag the task                                                                                                                 | `policy.ts`, `pipeline.ts`         |
 | Edits              | Search/replace on existing files or create new ones. No changes to existing tests, lockfiles, `node_modules`, `.git`; no big deletions; no paths through symlinks; a create never overwrites                                   | `edits.ts`, `safePath.ts`          |
 | Process isolation  | One container per command, `--init`, gVisor via `SANDBOX_RUNTIME=runsc` when available                                                                                                                                         | `packages/sandbox/src/args.ts`     |
-| Secrets            | Container env built from scratch. No env files, no npmrc, no mounts but `/work`                                                                                                                                                | `buildRunArgs`                     |
+| Secrets            | Container env built from scratch. No env files, no npmrc, no mounts but `/work` and the dependency cache entry (read-only)                                                                                                     | `buildRunArgs`                     |
 | Network            | Install: internal `sandbox` network whose only reachable service is the proxy (GET/HEAD to Verdaccio). Checks and fixes: `--network none`. A test run that tries to connect anyway is reported as `blocked` and halts the task | `apps/egress-proxy`, `pipeline.ts` |
 | Resources          | 1 GB, 1 CPU, 256 pids, 120 s per command, read-only root, `--cap-drop ALL`, `no-new-privileges`, non-root uid                                                                                                                  | `args.ts`, `run.ts`                |
 | What gets proposed | The diff holds only paths the agent edited through the policy check. Anything else a test run wrote in the worktree (`.hub/` included) never reaches it                                                                        | `diffPaths` in `workspace.ts`      |
 | What gets shipped  | Only after approval by the policy's approver. `checkPatch` re-checks every path against the role, and refuses symlinks, binary patches and mode changes. `git apply` runs inside the hub repo                                  | `routes/tasks.ts`, `workspace.ts`  |
 | Audit              | Every command, edit, refusal, block, approval and status change is an event on the task's stream                                                                                                                               | `TaskEvent` in `packages/shared`   |
+
+## Dependency cache
+
+A task with a `package-lock.json` doesn't install into its worktree. The hub hashes the lockfile (SHA-256) and looks for `DEPS_CACHE_DIR/<hash>`:
+
+- **Hit:** that folder is mounted read-only at `/work/node_modules` for every check; no install runs.
+- **Miss:** `npm ci` runs in a scratch folder beside the entries (registry-only network), then the same vetting as any install: exit code, the proxy's denied log, the install-script scanner on the scratch `node_modules`. Only if all pass does one `rename` make it the entry; if another task got there first, its entry is kept and the scratch copy deleted. Any failure ends the task as an error and leaves the cache as it was.
+- **No lockfile:** `npm install` into the worktree, uncached.
+
+A changed lockfile is a different hash, so it never reuses an install made from another one. The host only hashes, copies the two manifest files, renames and deletes folders (`apps/hub/src/tasks/depsCache.ts`). Vitest writes into `node_modules` by default, so the check runs it with `--no-cache --configLoader runner` (`checkCommand`); the mount never becomes writable.
 
 ## Host-side traps the design avoids
 

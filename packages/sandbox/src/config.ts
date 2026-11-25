@@ -11,6 +11,8 @@ export type SandboxConfig = {
   registryUrl: string;
   proxyUrl: string;
   // Bind-mount options for /work. `rw,Z` on SELinux hosts (Fedora + podman).
+  // Extra mounts (the shared dependency cache) get the same options with
+  // their own access mode and a shared `z` label in place of `Z`.
   volumeOptions: string;
   // Escape hatch, e.g. `--userns=keep-id` for rootless podman.
   extraArgs: string[];
@@ -27,7 +29,7 @@ export const sandboxConfigFromEnv = (
   runtime: env.SANDBOX_RUNTIME || undefined,
   network: env.SANDBOX_NETWORK || 'sandbox',
   registryUrl: env.SANDBOX_REGISTRY_URL || 'http://verdaccio:4873/',
-  proxyUrl: env.SANDBOX_PROXY_URL || 'http://egress-proxy:8080',
+  proxyUrl: env.SANDBOX_PROXY_URL || 'http://172.28.0.2:8080',
   volumeOptions: env.SANDBOX_VOLUME_OPTS || 'rw',
   extraArgs: (env.SANDBOX_EXTRA_ARGS || '').split(/\s+/).filter(Boolean),
   user: `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,

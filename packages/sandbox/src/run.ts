@@ -5,6 +5,7 @@ import {
   buildRunArgs,
   defaultLimits,
   SANDBOX_LABEL,
+  type ExtraMount,
   type Limits,
   type NetworkMode,
 } from './args.ts';
@@ -15,6 +16,7 @@ export type RunOptions = {
   network: NetworkMode;
   limits?: Partial<Limits>;
   labels?: Record<string, string>;
+  extraMounts?: ExtraMount[];
 };
 
 export type SandboxRun = {
@@ -60,6 +62,7 @@ export const runInSandbox = async (
       network: options.network,
       limits,
       ...(options.labels ? { labels: options.labels } : {}),
+      ...(options.extraMounts ? { extraMounts: options.extraMounts } : {}),
     },
     cmd
   );

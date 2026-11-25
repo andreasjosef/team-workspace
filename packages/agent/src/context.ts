@@ -16,7 +16,9 @@ export const parseList = (raw: string): string[] => {
 
 // A tiny front-matter reader for decision files: `key: value` lines, with
 // `files` as a flow-style list. Anything it doesn't understand is ignored.
-export const parseDoc = (path: string, raw: string): ProductDoc => {
+// CRLF files (saved on Windows) read the same as LF ones.
+export const parseDoc = (path: string, text: string): ProductDoc => {
+  const raw = text.replace(/\r\n/g, '\n');
   const isDecision = path.startsWith('decisions/');
   const fm = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
   const meta: Record<string, string> = {};

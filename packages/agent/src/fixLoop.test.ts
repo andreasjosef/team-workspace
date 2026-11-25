@@ -27,6 +27,47 @@ describe('runTaskLoop', () => {
     });
   });
 
+  it('starts from a given first result without checking it again', async () => {
+    // The same task twice: once the loop runs its own first check, once the
+    // caller hands in the result of the check it already ran.
+    const run = async (handFirstIn: boolean) => {
+      const counts = [0, 1, 0];
+      const calls: string[] = [];
+      const iterations: [number, number][] = [];
+      const check = async () => {
+        calls.push('check');
+        return { typeErrors: 0, testsFailed: counts.shift()!, errors: '' };
+      };
+      const first = handFirstIn
+        ? { typeErrors: 0, testsFailed: counts.shift()!, errors: '' }
+        : undefined;
+      const result = await runTaskLoop({
+        check,
+        ...(first ? { first } : {}),
+        propose: async () => {
+          calls.push('propose');
+          return ok(edit);
+        },
+        apply: async () => ok(null),
+        onIteration: (n, c) => iterations.push([n, c.testsFailed]),
+        baseline: clean,
+      });
+      return { result, calls, iterations };
+    };
+
+    const given = await run(true);
+    const own = await run(false);
+    expect(own.calls[0]).toBe('check');
+    expect(given.calls).toEqual(own.calls.slice(1));
+    expect(given.iterations).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 0],
+    ]);
+    expect(given.iterations).toEqual(own.iterations);
+    expect(given.result).toEqual(own.result);
+  });
+
   it('counts refused patches as iterations and gives up', async () => {
     const result = await runTaskLoop({
       check: async () => ({ ...clean, errors: '' }),

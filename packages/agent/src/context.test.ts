@@ -47,6 +47,18 @@ describe('parseDoc', () => {
     });
   });
 
+  it('reads a CRLF decision the same as its LF version', () => {
+    const lf =
+      '---\nid: D-014\ntitle: Discount codes are case-insensitive\nfiles: ["src/checkout/discount.ts"]\n---\nLine one.\nLine two.\n';
+    const crlf = lf.replace(/\n/g, '\r\n');
+    const path = 'decisions/D-014-discount-codes.md';
+    expect(parseDoc(path, crlf)).toEqual(parseDoc(path, lf));
+    expect(parseDoc(path, crlf)).toMatchObject({
+      id: 'D-014',
+      files: ['src/checkout/discount.ts'],
+    });
+  });
+
   it('falls back to the first heading for plain docs', () => {
     expect(
       parseDoc('docs/onboarding.md', '# Onboarding\n\nText')

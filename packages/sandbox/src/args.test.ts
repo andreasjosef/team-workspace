@@ -65,4 +65,88 @@ describe('buildRunArgs', () => {
     ]);
     expect(flag(args, '--runtime')).toBe('runsc');
   });
+
+  it('keeps a private SELinux label on /work and gives extra mounts a shared one', () => {
+    const args = buildRunArgs(
+      { ...config, volumeOptions: 'rw,Z' },
+      {
+        ...spec('none'),
+        extraMounts: [
+          {
+            source: '/var/lib/team-workspace/deps/abc',
+            target: '/work/node_modules',
+            readonly: true,
+          },
+        ],
+      },
+      ['true']
+    );
+    const volumes = args.flatMap((a, i) =>
+      args[i - 1] === '--volume' ? [a] : []
+    );
+    expect(volumes).toEqual([
+      '/jobs/1/repo:/work:rw,Z',
+      '/var/lib/team-workspace/deps/abc:/work/node_modules:ro,z',
+    ]);
+  });
+
+  it('adds no SELinux label to extra mounts when /work has none', () => {
+    const args = buildRunArgs(
+      config,
+      {
+        ...spec('none'),
+        extraMounts: [{ source: '/deps/abc', target: '/x', readonly: true }],
+      },
+      ['true']
+    );
+    const volumes = args.flatMap((a, i) =>
+      args[i - 1] === '--volume' ? [a] : []
+    );
+    expect(volumes).toEqual(['/jobs/1/repo:/work:rw', '/deps/abc:/x:ro']);
+  });
+
+  it('adds extra mounts with their read-only flag, and still no host variable', () => {
+    process.env.VULTR_INFERENCE_API_KEY = 'must-not-leak';
+    const args = buildRunArgs(
+      { ...config, volumeOptions: 'rw,z' },
+      {
+        ...spec('none'),
+        extraMounts: [
+          {
+            source: '/var/lib/team-workspace/deps/abc',
+            target: '/work/node_modules',
+            readonly: true,
+          },
+          { source: '/srv/scratch', target: '/scratch', readonly: false },
+        ],
+      },
+      ['./node_modules/.bin/vitest', 'run']
+    );
+    const volumes = args.flatMap((a, i) =>
+      args[i - 1] === '--volume' ? [a] : []
+    );
+    expect(volumes).toEqual([
+      '/jobs/1/repo:/work:rw,z',
+      '/var/lib/team-workspace/deps/abc:/work/node_modules:ro,z',
+      '/srv/scratch:/scratch:rw,z',
+    ]);
+    expect(args.join(' ')).not.toContain('must-not-leak');
+    expect(args).not.toContain('--env-file');
+    const env = args.flatMap((a, i) => (args[i - 1] === '--env' ? [a] : []));
+    expect(env.map((e) => e.split('=')[0]).sort()).toEqual(
+      [
+        'CI',
+        'HOME',
+        'npm_config_audit',
+        'npm_config_cache',
+        'npm_config_fund',
+        'npm_config_update_notifier',
+      ].sort()
+    );
+  });
+
+  it('mounts only /work when no extra mounts are given', () => {
+    const args = buildRunArgs(config, spec('none'), ['true']);
+    expect(args.filter((a) => a === '--volume')).toHaveLength(1);
+  });
 });

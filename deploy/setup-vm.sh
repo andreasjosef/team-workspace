@@ -25,7 +25,7 @@ corepack enable
 # sandboxes: that is root-equivalent, which is why nothing else runs as it.
 id hub >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin hub
 usermod -aG docker hub
-install -d -o hub -g hub /var/lib/team-workspace /var/lib/team-workspace/tasks /var/lib/team-workspace/repo
+install -d -o hub -g hub /var/lib/team-workspace /var/lib/team-workspace/tasks /var/lib/team-workspace/deps /var/lib/team-workspace/repo /var/lib/team-workspace/docker
 
 # Only SSH, HTTP and HTTPS from outside. Compose publishes everything else
 # on 127.0.0.1, which Docker's iptables rules don't expose.

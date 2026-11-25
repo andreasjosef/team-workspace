@@ -1,5 +1,6 @@
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readRegularFile } from './files.ts';
 
 // Everything here reads files that untrusted code wrote. Rules: never follow
 // a symlink (a package could point one at the host's ~/.ssh), never read a
@@ -37,11 +38,8 @@ const isDir = async (p: string) => {
   return s?.isDirectory() ?? false;
 };
 
-const readSmallFile = async (p: string) => {
-  const s = await lstat(p).catch(() => null);
-  if (!s?.isFile() || s.size > MAX_FILE) return null;
-  return readFile(p, 'utf8');
-};
+const readSmallFile = async (p: string) =>
+  (await readRegularFile(p, MAX_FILE))?.toString('utf8') ?? null;
 
 const scriptFile = (script: string) =>
   /\bnode\s+([\w./-]+\.(?:c|m)?js)\b/.exec(script)?.[1] ?? null;
@@ -112,11 +110,18 @@ const scanNodeModules = async (
   }
 };
 
-// Every install-time script in a workspace's node_modules.
+// Every install-time script in a workspace's node_modules. No node_modules
+// means nothing to scan; a node_modules that is anything but a real folder
+// (a symlink an install script planted, pointing anywhere on the host) is
+// refused: callers check for that first, so reaching here with one is a bug.
 export const scanInstallScripts = async (
   workdir: string
 ): Promise<InstallScript[]> => {
+  const root = join(workdir, 'node_modules');
+  const s = await lstat(root).catch(() => null);
+  if (s && !s.isDirectory())
+    throw new Error(`Refusing to scan ${root}: not a real directory`);
   const found = new Map<string, InstallScript>();
-  await scanNodeModules(join(workdir, 'node_modules'), found);
+  await scanNodeModules(root, found);
   return [...found.values()];
 };

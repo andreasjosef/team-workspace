@@ -22,6 +22,14 @@ export const defaultLimits: Limits = {
   tmpSize: '512m',
 };
 
+// A host directory bind-mounted into the sandbox besides /work, e.g. the
+// warm dependency cache at /work/node_modules (read-only).
+export type ExtraMount = {
+  source: string;
+  target: string;
+  readonly: boolean;
+};
+
 export type RunSpec = {
   name: string;
   // Host directory mounted at /work: the only thing the sandbox can change.
@@ -30,9 +38,28 @@ export type RunSpec = {
   limits: Limits;
   // Labels let the hub find and remove leftovers after a crash.
   labels?: Record<string, string>;
+  extraMounts?: ExtraMount[];
 };
 
 export const SANDBOX_LABEL = 'team-workspace.sandbox';
+
+// Where the task's worktree appears inside every sandbox.
+export const CONTAINER_WORKDIR = '/work';
+
+// Options for an extra mount: the configured bind options with the access
+// mode swapped and any SELinux label made shared. /work keeps `Z` (a label
+// private to one container), but an extra mount such as a dependency cache
+// entry is used by several sandboxes at once, so `rw,Z` becomes `ro,z`.
+const sharedMountOptions = (volumeOptions: string, readonly: boolean) =>
+  [
+    readonly ? 'ro' : 'rw',
+    ...volumeOptions
+      .split(',')
+      .filter((o) => o && o !== 'rw' && o !== 'ro')
+      .map((o) => (o === 'Z' ? 'z' : o)),
+  ]
+    .filter((o, i, all) => all.indexOf(o) === i)
+    .join(',');
 
 // The whole containment policy, as a pure function: easy to read, easy to
 // test, and the one place to change it. No secrets go in here, ever: the
@@ -81,9 +108,13 @@ export const buildRunArgs = (
     '--tmpfs',
     `/tmp:rw,exec,nosuid,size=${limits.tmpSize}`,
     '--volume',
-    `${spec.workdir}:/work:${config.volumeOptions}`,
+    `${spec.workdir}:${CONTAINER_WORKDIR}:${config.volumeOptions}`,
+    ...(spec.extraMounts ?? []).flatMap((m) => [
+      '--volume',
+      `${m.source}:${m.target}:${sharedMountOptions(config.volumeOptions, m.readonly)}`,
+    ]),
     '--workdir',
-    '/work',
+    CONTAINER_WORKDIR,
     '--memory',
     limits.memory,
     '--memory-swap',

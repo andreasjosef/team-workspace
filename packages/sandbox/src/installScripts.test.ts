@@ -77,4 +77,22 @@ describe('scanInstallScripts', () => {
     expect(await scanInstallScripts(root)).toEqual([]);
     await rm(outside, { recursive: true, force: true });
   });
+
+  it('refuses a node_modules that is itself a symlink', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'outside-'));
+    await pkg(join(outside, 'secret'), {
+      name: 'secret',
+      version: '1.0.0',
+      scripts: { install: 'echo hi' },
+    });
+    await symlink(outside, join(root, 'node_modules'));
+    await expect(scanInstallScripts(root)).rejects.toThrow(
+      /not a real directory/
+    );
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('finds nothing when there is no node_modules', async () => {
+    expect(await scanInstallScripts(root)).toEqual([]);
+  });
 });

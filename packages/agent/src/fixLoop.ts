@@ -14,6 +14,9 @@ export type CheckOutcome = CheckCounts & { errors: string };
 
 export type TaskLoopDeps = {
   check: () => Promise<CheckOutcome>;
+  // The result of a check the caller already ran on the unchanged worktree
+  // (the hub's baseline). Given, the loop starts from it instead of checking.
+  first?: CheckOutcome;
   propose: (state: {
     latest: CheckOutcome;
     applied: number;
@@ -41,7 +44,7 @@ export const runTaskLoop = async (
   deps: TaskLoopDeps
 ): Promise<TaskLoopResult> => {
   const rules = deps.rules ?? defaultStopRules;
-  let latest = await deps.check();
+  let latest = deps.first ?? (await deps.check());
   const history: CheckCounts[] = [latest];
   deps.onIteration(0, latest);
   let lastRejection: string | undefined;

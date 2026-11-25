@@ -21,6 +21,8 @@ const EnvSchema = z
     INFERENCE_MODEL: z.string().optional(),
     EGRESS_ADMIN_URL: z.url().default('http://127.0.0.1:8081'),
     TASKS_DIR: z.string().default('/var/lib/team-workspace/tasks'),
+    // Warm node_modules, one per lockfile hash, mounted read-only.
+    DEPS_CACHE_DIR: z.string().default('/var/lib/team-workspace/deps'),
     MAX_CONCURRENT_TASKS: z.coerce.number().int().min(1).default(2),
     // Keep task workspaces after the run, for debugging only.
     KEEP_WORKSPACES: z.stringbool().default(false),

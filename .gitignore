@@ -6,4 +6,5 @@ coverage
 .DS_Store
 # Per-task workspaces when TASKS_DIR points inside the repo
 .tasks
+.deps
 demo/verdaccio/storage

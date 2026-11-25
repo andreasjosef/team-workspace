@@ -10,6 +10,8 @@ Group=hub
 WorkingDirectory=/opt/team-workspace
 EnvironmentFile=/opt/team-workspace/.env
 Environment=NODE_ENV=production
+# The docker CLI's config dir: /home is hidden from the service (ProtectHome).
+Environment=DOCKER_CONFIG=/var/lib/team-workspace/docker
 # Node runs the TypeScript source directly; no build step.
 ExecStart=/usr/bin/node apps/hub/src/index.ts
 Restart=on-failure
