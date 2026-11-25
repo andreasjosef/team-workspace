@@ -17,6 +17,9 @@ export type TaskContext = {
   // the reproduction's paths once there is one.
   step?: TaskStep;
   reproduction?: string[];
+  // Tracked test files next to the context files, named in the reproduce
+  // step so the model doesn't try to create one of them.
+  existingTests?: string[];
 };
 
 const FORMAT = `Answer with one JSON object and nothing else:
@@ -33,8 +36,12 @@ Rules:
 const MAX_FILE_CHARS = 12_000;
 
 const stepLine = (ctx: TaskContext) => {
-  if (ctx.step === 'reproduce')
-    return "Step: reproduce. Answer with only a new Vitest test file that fails because of the problem described. Don't fix anything yet: an answer that changes any other file is rejected.";
+  if (ctx.step === 'reproduce') {
+    const exist = ctx.existingTests?.length
+      ? ` These test files already exist and stay unchanged: ${ctx.existingTests.join(', ')}. Create a file with a new name.`
+      : '';
+    return `Step: reproduce. Answer with only a new Vitest test file that fails because of the problem described. Don't fix anything yet: an answer that changes any other file is rejected.${exist}`;
+  }
   if (ctx.step === 'fix')
     return `Step: fix. The reproduction (${ctx.reproduction?.join(', ') || 'the new test'}) fails now. Fix the cause in the source files so it passes. Don't change the reproduction or any other test.`;
   return '';

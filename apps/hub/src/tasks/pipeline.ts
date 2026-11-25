@@ -5,6 +5,7 @@ import {
   checkPolicy,
   filesFromErrors,
   isCreate,
+  isTestPath,
   matchDecisions,
   parseEditsResponse,
   rankFiles,
@@ -159,7 +160,8 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const signals = scanTaskInput(input.text);
   if (signals.length) emit({ type: 'input_flagged', signals });
   const sources: { path: string; content: string }[] = [];
-  for (const path of await trackedFiles(ws)) {
+  const tracked = await trackedFiles(ws);
+  for (const path of tracked) {
     if (!/^src\/.*\.[cm]?[jt]sx?$/.test(path) || /\.(test|spec)\./.test(path))
       continue;
     const content = await readInside(ws.repo, path);
@@ -167,6 +169,13 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   }
   const contextFiles = rankFiles(sources, text);
   const decisions = matchDecisions(deps.hub.docs, contextFiles, text);
+  // Tests that sit next to the context files: a bug's reproduce step names
+  // them, so the model picks a new file instead of one that exists.
+  const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/') + 1);
+  const contextDirs = new Set(contextFiles.map(dirOf));
+  const existingTests = tracked.filter(
+    (path) => isTestPath(path) && contextDirs.has(dirOf(path))
+  );
   emit({
     type: 'context',
     files: contextFiles,
@@ -360,7 +369,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           files,
           errors: touched.size ? latest.errors : '',
           ...(lastRejection ? { lastRejection } : {}),
-          ...(step ? { step } : {}),
+          ...(step ? { step, existingTests } : {}),
           ...(reproduction ? { reproduction } : {}),
         })
       );
