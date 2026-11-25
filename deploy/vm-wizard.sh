@@ -226,6 +226,13 @@ vm_env() {
   printf '  %s✓ set%s %s in the VM .env\n' "$GREEN" "$RESET" "$1"
 }
 
+# A hidden paste can carry the terminal's bracketed-paste markers (ESC[200~
+# and ESC[201~) or stray whitespace, which turn a good key into a 401.
+clean_key() {
+  VULTR_INFERENCE_API_KEY=$(printf '%s' "$VULTR_INFERENCE_API_KEY" \
+    | sed $'s/\x1b\\[20[01]~//g' | tr -d '[:space:][:cntrl:]')
+}
+
 guide_note() {
   local n=""
   printf '\n  %sWas docs/deploying.md wrong or missing a step here? Type a note, or Enter for no:%s ' "$DIM" "$RESET"
@@ -414,6 +421,7 @@ if vm "sudo grep -q '^VULTR_INFERENCE_API_KEY=..*' $REMOTE_DIR/.env"; then
 fi
 say "Copy the Vultr inference key from the team's password manager."
 ask_secret VULTR_INFERENCE_API_KEY "Paste the key (hidden):"
+clean_key
 if [[ -n "$VULTR_INFERENCE_API_KEY" ]]; then
   printf '%s\n' "$VULTR_INFERENCE_API_KEY" | vm_env VULTR_INFERENCE_API_KEY
 fi
@@ -434,6 +442,7 @@ stage "Pick and pin the model"
 if [[ -z "$VULTR_INFERENCE_API_KEY" ]]; then
   say "Listing models needs the key here too (kept in memory only)."
   ask_secret VULTR_INFERENCE_API_KEY "Paste the key (hidden):"
+  clean_key
 fi
 auth() { printf 'header = "Authorization: Bearer %s"\n' "$VULTR_INFERENCE_API_KEY"; }
 if ! models=$(auth | curl -sS --fail -K - "$INFERENCE_BASE_URL/models" \
