@@ -410,14 +410,14 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   // outcome), never on the text. Spec 4 owns the full halt rule; see
   // docs/ticket-to-pr/README.md, "Open questions".
   if (signals.length) {
-    const carried = `The report carried instructions (${signals.join(', ')})`;
+    const carriedInstructions = `The report carried instructions (${signals.join(', ')})`;
     emit({
       type: 'status',
       status: 'flagged',
       reason:
         outcome.status === 'green'
-          ? `${carried}, so the change was not proposed`
-          : `${carried}; ${outcome.reason}`,
+          ? `${carriedInstructions}, so the change was not proposed`
+          : `${carriedInstructions}; ${outcome.reason}`,
     });
     return;
   }
