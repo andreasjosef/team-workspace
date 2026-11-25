@@ -1,18 +1,17 @@
 import {
   applyEdits,
   buildTaskMessages,
+  checkCommand,
   checkPolicy,
-  countFailedTests,
-  countTypeErrors,
   filesFromErrors,
   isCreate,
   matchDecisions,
   parseEditsResponse,
   rankFiles,
+  readCheckOutput,
   resolveInside,
   runTaskLoop,
   scanTaskInput,
-  topErrors,
   type CheckCounts,
   type CheckOutcome,
   type Inference,
@@ -201,12 +200,10 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   let networkAttempt: string | null = null;
   const check = async (): Promise<CheckOutcome> => {
-    const tsc = await run(
-      ['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false'],
-      'none'
-    );
-    const tests = await run(['npx', '--no-install', 'vitest', 'run'], 'none');
-    const attempt = NETWORK_ATTEMPT.exec(tests.output);
+    // Type check and tests in one sandbox boot; see checkCommand.
+    const ran = await run(checkCommand(), 'none');
+    const { testOutput, ...outcome } = readCheckOutput(ran.output);
+    const attempt = NETWORK_ATTEMPT.exec(testOutput);
     if (attempt && !networkAttempt) {
       networkAttempt = attempt[0];
       emit({
@@ -215,11 +212,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
         detail: `test run: ${attempt[0]} (sandbox has no network)`,
       });
     }
-    return {
-      typeErrors: countTypeErrors(tsc.output),
-      testsFailed: countFailedTests(tests.output, tests.exitCode),
-      errors: `${topErrors(tsc.output)}\n${topErrors(tests.output)}`.trim(),
-    };
+    return outcome;
   };
   const first = await check();
   const baseline: CheckCounts = {

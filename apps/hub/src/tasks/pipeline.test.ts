@@ -1,4 +1,9 @@
-import type { ChatMessage, EditsResponse, Inference } from '@app/agent';
+import {
+  checkOutput,
+  type ChatMessage,
+  type EditsResponse,
+  type Inference,
+} from '@app/agent';
 import type {
   DeniedRequest,
   NetworkMode,
@@ -137,13 +142,34 @@ const fakeSandbox = (script: Record<string, Script>) => {
   return { run, calls, lines: () => calls.map((c) => c.cmd.join(' ')) };
 };
 
-// What Vitest prints, as far as countFailedTests reads it.
-const vitest = (failed: number, passed = 4): Partial<SandboxRun> => ({
-  exitCode: failed ? 1 : 0,
-  output: failed
-    ? ` Test Files  1 failed | 1 passed (2)\n      Tests  ${failed} failed | ${passed} passed (${failed + passed})\n`
-    : ` Test Files  2 passed (2)\n      Tests  ${passed} passed (${passed})\n`,
-});
+// A check is one sandbox run (tsc, then vitest, in one `sh -c`); this key
+// matches it in a `fakeSandbox` script.
+const CHECK = 'vitest run';
+
+// What one check run prints, framed the way checkCommand frames it: tsc with
+// `typeErrors` errors, then Vitest with `failed` failing tests (as far as the
+// counters read them). `testOutput` is extra Vitest output, e.g. a network
+// error a test hit.
+const check = (
+  failed: number,
+  { passed = 4, typeErrors = 0, testOutput = '' } = {}
+): Partial<SandboxRun> => {
+  const tsc = Array.from(
+    { length: typeErrors },
+    (_, i) =>
+      `src/checkout/discount.ts(${i + 1},1): error TS2339: Property 'x' does not exist.`
+  ).join('\n');
+  const tests = failed
+    ? ` Test Files  1 failed | 1 passed (2)\n      Tests  ${failed} failed | ${passed} passed (${failed + passed})`
+    : ` Test Files  2 passed (2)\n      Tests  ${passed} passed (${passed})`;
+  return {
+    exitCode: 0,
+    output: checkOutput(
+      { output: tsc, exitCode: typeErrors ? 2 : 0 },
+      { output: `${testOutput}\n${tests}`.trim(), exitCode: failed ? 1 : 0 }
+    ),
+  };
+};
 
 // The host may read worktree files (the pipeline does too); the fake uses it
 // to decide what a test run would report.
@@ -275,20 +301,20 @@ const fix: EditsResponse = {
   ],
 };
 
-// A sandbox for the demo shop: install and tsc succeed; Vitest is red while
-// the reproduction test exists and the fix doesn't, green otherwise. Each
-// test run also writes a stray file into /work, as a real one could.
-// `overrides` replaces single entries, e.g. an install that leaves files.
+// A sandbox for the demo shop: install succeeds; each check has a clean type
+// check, and tests red while the reproduction test exists and the fix
+// doesn't, green otherwise. Each check also writes a stray file into /work,
+// as a real test run could. `overrides` replaces single entries, e.g. an
+// install that leaves files.
 const shopSandbox = (overrides: Record<string, Script> = {}) =>
   fakeSandbox({
     'npm install': 'added 42 packages',
     'npm ci': 'added 42 packages',
-    tsc: '',
-    vitest: async (call) => {
+    [CHECK]: async (call) => {
       await writeFile(join(call.workdir, 'stray-from-test-run.txt'), 'x');
       const repro = await readWork(call, REPRO_TEST);
       const code = await readWork(call, 'src/checkout/discount.ts');
-      return vitest(repro && !code?.includes('toUpperCase') ? 1 : 0);
+      return check(repro && !code?.includes('toUpperCase') ? 1 : 0);
     },
     ...overrides,
   });
@@ -374,12 +400,94 @@ describe('pipeline', () => {
     });
 
     expect(out.status).toBe('proposed');
-    // Install, then one check: one typecheck and one test run.
+    // Install, then one check: one sandbox run.
     expect(beforeModel?.[0]).toBe('npm install');
-    const checks = beforeModel!.slice(1);
-    expect(checks).toHaveLength(2);
-    expect(checks.filter((l) => l.includes('tsc'))).toHaveLength(1);
-    expect(checks.filter((l) => l.includes('vitest'))).toHaveLength(1);
+    expect(beforeModel!.slice(1)).toEqual([expect.stringContaining(CHECK)]);
+  });
+
+  it('runs each check as one sandbox call with no network, counting what it printed', async () => {
+    const hub = await makeHub();
+    const sandbox = fakeSandbox({
+      'npm install': 'added 42 packages',
+      [CHECK]: [check(0), check(1, { typeErrors: 2 }), check(0)],
+    });
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('proposed');
+    const checks = sandbox.calls.slice(1);
+    expect(checks).toHaveLength(3);
+    for (const c of checks) {
+      expect(c.network).toBe('none');
+      expect(c.cmd.slice(0, 2)).toEqual(['sh', '-c']);
+      expect(c.cmd[2]).toContain('./node_modules/.bin/tsc');
+      expect(c.cmd[2]).toContain('./node_modules/.bin/vitest run');
+      expect(c.cmd.join(' ')).not.toContain('npx');
+    }
+    const counts = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [[e.typeErrors, e.testsFailed]] : []
+    );
+    expect(counts).toEqual([
+      [0, 0],
+      [2, 1],
+      [0, 0],
+    ]);
+  });
+
+  it('counts a check whose markers are missing as failing', async () => {
+    const hub = await makeHub();
+    const sandbox = fakeSandbox({
+      'npm install': 'added 42 packages',
+      // After the baseline every check looks green, but the framing is gone
+      // (e.g. the sandbox was killed, or the output tail cut it off).
+      [CHECK]: [check(0), ' Tests  4 passed (4)'],
+    });
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    const curve = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [e.testsFailed] : []
+    );
+    expect(curve[0]).toBe(0);
+    expect(curve.slice(1).every((n) => n === 1)).toBe(true);
+    expect(out.status).not.toBe('proposed');
+  });
+
+  it('halts when a test run tried to reach the network', async () => {
+    const hub = await makeHub();
+    const sandbox = fakeSandbox({
+      'npm install': 'added 42 packages',
+      [CHECK]: check(1, {
+        testOutput: 'Error: getaddrinfo ENOTFOUND collector.attacker.example',
+      }),
+    });
+    const model = scriptedInference([reproduce]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.reason).toBe('A test run tried to reach the network');
+    expect(out.events).toContainEqual({
+      type: 'blocked',
+      kind: 'network',
+      detail: 'test run: getaddrinfo ENOTFOUND (sandbox has no network)',
+    });
   });
 
   it('INC-1043: out-of-scope edits are refused and the task ends flagged', async () => {
@@ -513,10 +621,9 @@ describe('pipeline', () => {
     });
 
     expect(out.status).toBe('proposed');
-    expect(sandbox.lines().slice(0, 3)).toEqual([
+    expect(sandbox.lines().slice(0, 2)).toEqual([
       'npm install',
-      expect.stringContaining('tsc'),
-      expect.stringContaining('vitest'),
+      expect.stringContaining(CHECK),
     ]);
   });
 });
