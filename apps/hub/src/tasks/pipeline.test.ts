@@ -399,6 +399,100 @@ describe('pipeline', () => {
     ).not.toContain('toUpperCase');
   });
 
+  it('INC-1042: a reproduction sent with the fix is rejected; the test comes first, then the fix', async () => {
+    const hub = await makeHub();
+    const sandbox = shopSandbox();
+    const together: EditsResponse = {
+      reasoning: 'Reproduce and fix in one go.',
+      edits: [...reproduce.edits, ...fix.edits],
+    };
+    const model = scriptedInference([together, reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('proposed');
+    // The rejected answer used an iteration with the counts unchanged and no
+    // check; then red, then green.
+    const curve = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [e.testsFailed] : []
+    );
+    expect(curve).toEqual([0, 0, 1, 0]);
+    expect(sandbox.lines().filter((l) => l.includes(CHECK))).toHaveLength(3);
+    // Each prompt names its step; the step after a rejection says why.
+    const user = (i: number) => model.calls[i]![1]!.content;
+    expect(user(0)).toContain('Step: reproduce');
+    expect(user(1)).toContain('Step: reproduce');
+    expect(user(1)).toContain('may add only new test files');
+    expect(user(2)).toContain('Step: fix');
+    expect(user(2)).toContain(REPRO_TEST);
+    // The task text still reaches the model only inside the untrusted markers.
+    for (const call of model.calls) {
+      const content = call[1]!.content;
+      const inside = /<untrusted[^>]*>[\s\S]*<\/untrusted>/.exec(content)?.[0];
+      expect(inside).toContain('summer20 at checkout');
+      expect(content.replace(inside!, '')).not.toContain(
+        'summer20 at checkout'
+      );
+    }
+    expect(out.diffPaths.sort()).toEqual(
+      [REPRO_TEST, 'src/checkout/discount.ts'].sort()
+    );
+  });
+
+  it('INC-1042: a reproduction that passes is discarded and never reaches the diff', async () => {
+    const hub = await makeHub();
+    const passing: EditsResponse = {
+      reasoning: 'A test that passes already.',
+      edits: [
+        {
+          path: 'src/checkout/discount.upper.test.ts',
+          create:
+            "import { expect, it } from 'vitest';\nimport { findDiscount } from './discount.ts';\n\nit('accepts an upper-case code', () => {\n  expect(findDiscount('SUMMER20', '2026-11-18')?.percentOff).toBe(20);\n});\n",
+        },
+      ],
+    };
+    const sandbox = shopSandbox();
+    const model = scriptedInference([passing, reproduce, fix]);
+    // Whether the passing test was still in the worktree when the model was
+    // next asked.
+    const leftOver: boolean[] = [];
+    const complete = model.inference.complete;
+    model.inference.complete = async (messages) => {
+      const ws = join(base, 'tasks', 't1', 'repo');
+      leftOver.push(
+        (await readFile(join(ws, passing.edits[0]!.path), 'utf8').catch(
+          () => null
+        )) !== null
+      );
+      return complete(messages);
+    };
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('proposed');
+    const curve = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [e.testsFailed] : []
+    );
+    expect(curve).toEqual([0, 0, 1, 0]);
+    expect(leftOver).toEqual([false, false, false]);
+    expect(model.calls[1]![1]!.content).toContain(
+      'the reproduction must fail before the fix'
+    );
+    expect(out.diffPaths.sort()).toEqual(
+      [REPRO_TEST, 'src/checkout/discount.ts'].sort()
+    );
+  });
+
   it('runs the baseline check once: the fix loop starts from its result', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
