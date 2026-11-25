@@ -140,6 +140,32 @@ Most of it exists. What changes:
 | Scope            | One `write` list per role                                                 | Two parts: tests (wide) and code (narrow), so a reproduction can sit next to code the agent may not change         |
 | Containment demo | Mock runner scripts it                                                    | Live run + "what if the model obeyed?" fixture run                                                                 |
 
+## Hackathon plan (deadline Friday 2026-11-27, afternoon)
+
+Agreed 2026-11-25. The demo is the core flow: a support rep forwards a report, and the agent goes safely from report to proposed fix (a PR), on its own.
+
+- **Keep:**
+  - **Fixed → PR:** spec 2, plus the PR link in the support view.
+  - **Flagged:** #19, plus a trimmed spec 4: the "what if the model obeyed?" fixture run through the real policy and sandbox.
+  - **Never merges:** branch protection.
+  - **A support view that puts the core flow first.**
+- **Only if time allows:** Explained (D-009), Thursday evening at the earliest.
+- **Cut for the hackathon:** Reproduced, Not reproduced and the two-part scope (most of spec 3); deleting the PO and dev views (hide them instead); context work as a system (after the hackathon, starting from `docs/agent-context.md`).
+- **Timeline:**
+  - **Wednesday evening:** #19, spec 2 broken into issues, and the GitHub demo repo, token and branch protection (human).
+  - **Thursday:** spec 2 and the trimmed spec 4, live runs on the VM, then the UI pass.
+  - **Friday morning:** code freeze around 10:00, five full rehearsals and a backup recording.
+
+## Idea: every message gets a drafted answer (2026-11-25)
+
+Seen while reworking the support view (#20). The product is bigger than bugs: **messages come in, agents work on them safely, and a person confirms the answer.** Human in the loop for every customer message, not just bug fixes.
+
+- **Every outcome comes with a drafted reply to the customer**, which the support rep confirms or edits before sending. Today the UI derives one fixed line per outcome. The agent should write it from what it found.
+- **Questions, not just bugs.** "Where do I change my shop logo?" (INC-1039 in `demo/incidents.json`) has no bug to reproduce. The agent reads the code and the docs in the same sandbox, without edits, and drafts the answer.
+- **It generalises the Explained outcome.** Explained ("a decision says this is intended") becomes one kind of answer, next to how-to answers, "we've confirmed it, a fix is in review", and "we couldn't confirm it".
+- **The trust model doesn't change.** The report is still untrusted data, and the agent still can't send anything itself. The support rep confirms each reply, and a developer merges each fix.
+- **Fit:** this is the direction for spec 3, after the hackathon. For Friday, at most a drafted reply on the Fixed and Flagged beats, and only if spec 2 and #19 are done.
+
 ## Specs to write
 
 In build order. Each one gets its own note with goal, done-when and steps.
