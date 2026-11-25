@@ -71,6 +71,8 @@ export const defaultGuardrails: Guardrails = {
 // add a new test (a bug task starts by reproducing the bug), but may not make
 // tests pass by changing existing ones.
 const TEST_FILE = /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+export const isTestPath = (path: string) =>
+  TEST_FILE.test(path.replaceAll('\\', '/'));
 const PROTECTED =
   /(^|\/)(node_modules|\.git)(\/|$)|(^|\/)(package-lock\.json|pnpm-lock\.yaml)$/;
 
@@ -93,7 +95,7 @@ export const checkGuardrails = (
       return fail('invalid', `Editing ${e.path} is not allowed`);
     }
     if (isCreate(e)) continue;
-    if (TEST_FILE.test(path)) {
+    if (isTestPath(path)) {
       return fail(
         'invalid',
         `Changing existing tests is not allowed: ${e.path}`

@@ -153,3 +153,4 @@ The numbers are guesses. Step 4 replaces them with measurements. If it's still t
 - Which model? (Step 0.)
 - Who runs this track? It touches `packages/sandbox` and `pipeline.ts`, so read `docs/architecture.md` first (AGENTS.md rule).
 - Do we keep Henrik's commits as cherry-picks with his authorship where they apply cleanly (only `75198d5`), and credit him in the commit messages for the ideas ported by hand?
+- **Settled (#13):** when the bug is already covered by a test that fails at the baseline, does a bug task skip the reproduce step? **No: it still needs a new reproduction**, one more failing test than at the baseline. The host can't tell whether an existing failing test is about this report without letting the task text decide something, and a baseline that's already red may be red for another reason. One rule for every bug keeps the 0 → 1 → 0 curve on screen and puts a reproduction in every pull request. Cost: sometimes a second test for the same bug.

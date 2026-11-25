@@ -51,13 +51,13 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 
 One task is one request from one role, and it ends proposed (green, waiting for approval), gave up, flagged, or errored. A task whose text the input scanner flagged never ends proposed: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
 
-| Phase    | Where   | Network             | What                                                                                                                                       |
-| -------- | ------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions       |
-| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts        |
-| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug starts with a new failing test. Halts on 3 refusals or a network attempt |
-| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                   |
-| deploy   | host    | GitHub (todo)       | After approval only: `checkPatch` again, `git apply --index` + commit on the hub repo, reload docs                                         |
+| Phase    | Where   | Network             | What                                                                                                                                         |
+| -------- | ------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions         |
+| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts          |
+| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug goes reproduce, then fix (below). Halts on 3 refusals or a network attempt |
+| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                     |
+| deploy   | host    | GitHub (todo)       | After approval only: `checkPatch` again, `git apply --index` + commit on the hub repo, reload docs                                           |
 
 ```
 queued → working → proposed → approved → deployed
@@ -66,6 +66,13 @@ queued → working → proposed → approved → deployed
 ```
 
 "Green" means no more type errors and failing tests than the baseline, **and** at least one accepted proposal: a task starts green, so the plain stop rule would end it before it did anything (`runTaskLoop` in `packages/agent/src/fixLoop.ts`).
+
+A bug task goes in two steps, enforced by the loop rather than asked for in the prompt; the step comes from the loop's state, never from the task text:
+
+- **Reproduce:** the answer may only create new test files. They're applied and checked; the loop goes on only if more tests fail than at the baseline. Otherwise they're deleted from the worktree (and never reach the diff) and the answer is rejected. This holds even when the baseline already has failing tests (spec 1, open questions).
+- **Fix:** anything the role's scope allows, except the reproduction. The stop rules count from the reproduction's check, since it raised the count on purpose.
+
+The role policy sees every answer before the step rule, so a step never hides an out-of-scope edit from the refusal count.
 
 Every state change is a `status` event on the task's stream, so the snapshot the API serves is derived from the audit trail, never stored beside it (`tasks/store.ts`).
 
