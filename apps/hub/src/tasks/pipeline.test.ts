@@ -459,6 +459,11 @@ describe('pipeline', () => {
     // Each prompt names its step; the step after a rejection says why.
     const user = (i: number) => model.calls[i]![1]!.content;
     expect(user(0)).toContain('Step: reproduce');
+    // The reproduce step names the tests next to the context files, so the
+    // model picks a new file name (live runs kept trying discount.test.ts).
+    expect(user(0)).toContain(
+      'These test files already exist and stay unchanged: src/checkout/discount.test.ts.'
+    );
     expect(user(1)).toContain('Step: reproduce');
     expect(user(1)).toContain('may add only new test files');
     expect(user(2)).toContain('Step: fix');
