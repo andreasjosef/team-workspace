@@ -107,7 +107,7 @@ The sandbox can write anything under `/work`, and the host later reads that dire
 
 ## Previews
 
-Planned, not built. A preview is the product running from a task's worktree, so it runs untrusted code reachable from the internet:
+**Dropped** with the move to support-only ([docs/ticket-to-pr](ticket-to-pr/README.md)): there's no PO role to preview for. Kept here in case it comes back. Planned, not built. A preview is the product running from a task's worktree, so it runs untrusted code reachable from the internet:
 
 - one container per task on an internal `previews` network: no egress, no secrets, the same caps;
 - Caddy routes `<id>.preview.<domain>` to it (wildcard certificate, or `sslip.io` subdomains);

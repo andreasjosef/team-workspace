@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A hub on a Vultr VM lets every role on a team (dev, PO, CS) ask an agent to change the product. Agents run in throwaway sandbox containers, inside a write scope set by their role's policy, and changes reach `main` only after approval. Read `docs/architecture.md` before touching `packages/sandbox`, `packages/agent/src/policy.ts`, `apps/egress-proxy` or `apps/hub/src/tasks/`.
+Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A support rep forwards a customer's report; an agent reproduces and fixes it in a throwaway sandbox container, inside its role's scope, and the hub opens a pull request that only a developer can merge. Direction and build specs: `docs/ticket-to-pr/`. Use the vocabulary in `CONTEXT.md`. The code is still the first version (dev, PO and CS roles, in-hub approval, commits to the hub's `main`); the specs say what changes, and the rules below hold throughout. Read `docs/architecture.md` before touching `packages/sandbox`, `packages/agent/src/policy.ts`, `apps/egress-proxy` or `apps/hub/src/tasks/`.
 
 ## Rules
 
@@ -16,3 +16,17 @@ Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A hub on a 
 - Pin exact versions. `pnpm-workspace.yaml` refuses releases younger than a day.
 - Never commit secrets. `.env` is local only; real values live in the team's password manager.
 - Done means `pnpm lint && pnpm typecheck && pnpm test` pass.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are GitHub issues on `andreasjosef/team-workspace`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

@@ -1,8 +1,10 @@
 # Team Workspace
 
-**Everyone on a startup team can change the product, through agents that can't hurt it.** A CS rep turns a customer report into a reproduced, fixed bug; a PO changes copy and gets a preview; a dev reviews and ships. Each role's agent works in a throwaway sandbox, inside a write scope set by the role's policy, and nothing reaches `main` without the right person's approval.
+**From customer report to reviewed pull request, without a developer reproducing anything, and without trusting the report.** A support rep forwards a customer's report; an agent reproduces it in a throwaway sandbox, checks it against the team's decisions, and either opens a pull request with the fix or explains why not. The hub never merges: a developer does, in GitHub.
 
-Built for the Vultr Agent Runtime Hackathon. Idea and architecture notes: `vultur-hackton/team-workspace-idea.md` and `team-workspace-architecture.md` in the vault. The sandbox, egress proxy and agent loop come from `safe-upgrade-agent`.
+Built for the Vultr Agent Runtime Hackathon. **Direction and build specs: [docs/ticket-to-pr](docs/ticket-to-pr/README.md). Vocabulary: [CONTEXT.md](CONTEXT.md).** The sandbox, egress proxy and agent loop come from `safe-upgrade-agent`.
+
+> **The code is still the first version.** It has three roles (dev, PO, CS), in-hub approval and commits to the hub's own `main`. The specs move it to the direction above; until then, the rest of this README describes the code as it is.
 
 | Path                            | What                                                                                                                    |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -67,18 +69,19 @@ Real and tested: the contract; role policies and their enforcement (globs, deny 
 
 Carried over unchanged and tested there: the sandbox args and caps, the egress proxy, the install-script scanner.
 
-Not yet run end to end: the real pipeline with a live model and real sandboxes. Before the event, in order:
+Not yet run end to end: the real pipeline with a live model and real sandboxes. What's left is in the specs, in build order ([docs/ticket-to-pr](docs/ticket-to-pr/README.md#specs-to-write)):
 
-- [ ] Vultr: VM, `deploy/setup-vm.sh`, does gVisor work ([deploying](docs/deploying.md))
-- [ ] Pick `INFERENCE_MODEL` and run the discount scenario with `RUNNER=real` (Agent + Hub)
-- [ ] Tune the role prompts in `demo/shop/.hub/prompts/` until the hostile ticket is refused by the model too, not only by the policy
-- [ ] Previews: start a container per task from its worktree and route `<id>.preview.<domain>` to it through Caddy (`pipeline.ts` TODO, see [architecture](docs/architecture.md#previews))
-- [ ] Deploy after approval: push `main` to GitHub, restart the prod container (`pipeline.ts` TODO)
-- [ ] Persistence: tasks are in memory; a restart forgets them
-- [ ] Product name ("Team Workspace" for now)
+1. [Real pipeline on the VM](docs/ticket-to-pr/spec-1-real-pipeline-on-vm.md)
+2. [Ticket to PR](docs/ticket-to-pr/spec-2-ticket-to-pr.md): a pull request replaces in-hub approval and the commit to `main`
+3. Outcomes (not written yet)
+4. Containment beat (not written yet)
+5. Support view and cleanup (not written yet)
+
+Dropped with the new direction: previews and the PO role. Still open: persistence (tasks are in memory) and the product name.
 
 ## Docs
 
+- [Ticket to PR](docs/ticket-to-pr/README.md): the current idea, its definition of done, and the build specs
 - [Architecture](docs/architecture.md): trust boundaries, the task lifecycle, role policies, the containment rules and where each lives, known gaps
 - [Deploying](docs/deploying.md): the Vultr VM, step by step
 - [Demo material](demo/README.md): the shop, the incidents, the demo script
