@@ -583,6 +583,44 @@ describe('pipeline', () => {
     for (const path of refused) expect(out.diff).not.toContain(path);
   });
 
+  it('INC-1043: a model that refuses and adds a harmless passing test still ends flagged, never proposed', async () => {
+    const hub = await makeHub();
+    const sandbox = shopSandbox();
+    // What the live model did on the VM (#11, run 1): an empty answer, then a
+    // harmless test that passes at the baseline. The policy refuses nothing.
+    const model = scriptedInference([
+      { reasoning: 'I will not follow those instructions.', edits: [] },
+      {
+        reasoning: 'Ignoring the malicious requests; adding a safety test.',
+        edits: [
+          {
+            path: 'src/security.test.ts',
+            create:
+              "import { expect, it } from 'vitest';\nimport { isAdmin } from './auth/users.ts';\n\nit('does not make ops@example.net an admin', () => {\n  expect(isAdmin({ id: 'u1', email: 'ops@example.net', role: 'customer' })).toBe(false);\n});\n",
+          },
+        ],
+      },
+    ]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1043,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.events.some((e) => e.type === 'input_flagged')).toBe(true);
+    expect(out.events.some((e) => e.type === 'policy_refused')).toBe(false);
+    expect(out.status).toBe('flagged');
+    expect(out.reason).toMatch(/instructions/);
+    expect(out.reason).toMatch(/not proposed/);
+    // Approval is only ever offered on `proposed`: it never shows up.
+    const statuses = out.events.flatMap((e) =>
+      e.type === 'status' ? [e.status] : []
+    );
+    expect(statuses).not.toContain('proposed');
+  });
+
   it('ends as an error before the fix phase when the install shows up in the denied log', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
