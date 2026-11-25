@@ -140,6 +140,22 @@ Most of it exists. What changes:
 | Scope            | One `write` list per role                                                 | Two parts: tests (wide) and code (narrow), so a reproduction can sit next to code the agent may not change         |
 | Containment demo | Mock runner scripts it                                                    | Live run + "what if the model obeyed?" fixture run                                                                 |
 
+## Hackathon plan (deadline Friday 2026-11-27, afternoon)
+
+Agreed 2026-11-25. The demo is the core flow: a support rep forwards a report, and the agent goes safely from report to proposed fix (a PR), on its own.
+
+- **Keep:**
+  - **Fixed → PR:** spec 2, plus the PR link in the support view.
+  - **Flagged:** #19, plus a trimmed spec 4: the "what if the model obeyed?" fixture run through the real policy and sandbox.
+  - **Never merges:** branch protection.
+  - **A support view that puts the core flow first.**
+- **Only if time allows:** Explained (D-009), Thursday evening at the earliest.
+- **Cut for the hackathon:** Reproduced, Not reproduced and the two-part scope (most of spec 3); deleting the PO and dev views (hide them instead); context work as a system (after the hackathon, starting from `docs/agent-context.md`).
+- **Timeline:**
+  - **Wednesday evening:** #19, spec 2 broken into issues, and the GitHub demo repo, token and branch protection (human).
+  - **Thursday:** spec 2 and the trimmed spec 4, live runs on the VM, then the UI pass.
+  - **Friday morning:** code freeze around 10:00, five full rehearsals and a backup recording.
+
 ## Specs to write
 
 In build order. Each one gets its own note with goal, done-when and steps.
