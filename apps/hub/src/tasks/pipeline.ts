@@ -234,6 +234,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const outcome = await runTaskLoop({
     baseline,
     check,
+    first,
     halt: () =>
       networkAttempt
         ? 'A test run tried to reach the network'
