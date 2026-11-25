@@ -18,11 +18,11 @@ import {
   type Inference,
 } from '@app/agent';
 import { fail, ok } from '@app/shared';
-import {
+import type {
   fetchDenied,
+  NetworkMode,
   runInSandbox,
-  type NetworkMode,
-  type SandboxConfig,
+  SandboxConfig,
 } from '@app/sandbox';
 import { lstat, readFile } from 'node:fs/promises';
 import { reloadHub, type Hub } from '../hub/load.ts';
@@ -45,9 +45,17 @@ import {
 // Written against the same building blocks as the upgrade agent's pipeline,
 // which ran end to end; this one hasn't yet. See README "What's left".
 
+// Every side effect that leaves the host process is a dep: the hub's start-up
+// wiring passes `runInSandbox`, `fetchDenied` and the live inference; the
+// pipeline test passes fakes (pipeline.test.ts).
+export type SandboxRunner = typeof runInSandbox;
+export type DeniedLogFetch = typeof fetchDenied;
+
 export type PipelineDeps = {
   hub: Hub;
   sandbox: SandboxConfig;
+  runInSandbox: SandboxRunner;
+  fetchDenied: DeniedLogFetch;
   inference: Inference;
   tasksDir: string;
   egressAdminUrl: string;
@@ -107,7 +115,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const text = `${input.title}\n${input.text}`;
 
   const run = async (cmd: string[], network: NetworkMode) => {
-    const r = await runInSandbox(deps.sandbox, cmd, {
+    const r = await deps.runInSandbox(deps.sandbox, cmd, {
       workdir: ws.repo,
       network,
       labels: { 'team-workspace.task': id },
@@ -155,7 +163,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     hasLock ? ['npm', 'ci'] : ['npm', 'install'],
     'registry'
   );
-  const denied = await fetchDenied(deps.egressAdminUrl, since).catch(() => []);
+  const denied = await deps
+    .fetchDenied(deps.egressAdminUrl, since)
+    .catch(() => []);
   for (const d of denied)
     emit({
       type: 'blocked',
