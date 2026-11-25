@@ -43,13 +43,23 @@ export type RunSpec = {
 
 export const SANDBOX_LABEL = 'team-workspace.sandbox';
 
-// The configured bind options with the access mode swapped: `rw,z` becomes
-// `ro,z`, so SELinux relabelling still applies to a read-only mount.
-const mountOptions = (volumeOptions: string, readonly: boolean) =>
+// Where the task's worktree appears inside every sandbox.
+export const CONTAINER_WORKDIR = '/work';
+
+// Options for an extra mount: the configured bind options with the access
+// mode swapped and any SELinux label made shared. /work keeps `Z` (a label
+// private to one container), but an extra mount such as a dependency cache
+// entry is used by several sandboxes at once, so `rw,Z` becomes `ro,z`.
+const sharedMountOptions = (volumeOptions: string, readonly: boolean) =>
   [
     readonly ? 'ro' : 'rw',
-    ...volumeOptions.split(',').filter((o) => o && o !== 'rw' && o !== 'ro'),
-  ].join(',');
+    ...volumeOptions
+      .split(',')
+      .filter((o) => o && o !== 'rw' && o !== 'ro')
+      .map((o) => (o === 'Z' ? 'z' : o)),
+  ]
+    .filter((o, i, all) => all.indexOf(o) === i)
+    .join(',');
 
 // The whole containment policy, as a pure function: easy to read, easy to
 // test, and the one place to change it. No secrets go in here, ever: the
@@ -98,13 +108,13 @@ export const buildRunArgs = (
     '--tmpfs',
     `/tmp:rw,exec,nosuid,size=${limits.tmpSize}`,
     '--volume',
-    `${spec.workdir}:/work:${config.volumeOptions}`,
+    `${spec.workdir}:${CONTAINER_WORKDIR}:${config.volumeOptions}`,
     ...(spec.extraMounts ?? []).flatMap((m) => [
       '--volume',
-      `${m.source}:${m.target}:${mountOptions(config.volumeOptions, m.readonly)}`,
+      `${m.source}:${m.target}:${sharedMountOptions(config.volumeOptions, m.readonly)}`,
     ]),
     '--workdir',
-    '/work',
+    CONTAINER_WORKDIR,
     '--memory',
     limits.memory,
     '--memory-swap',

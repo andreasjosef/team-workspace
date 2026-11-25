@@ -66,6 +66,45 @@ describe('buildRunArgs', () => {
     expect(flag(args, '--runtime')).toBe('runsc');
   });
 
+  it('keeps a private SELinux label on /work and gives extra mounts a shared one', () => {
+    const args = buildRunArgs(
+      { ...config, volumeOptions: 'rw,Z' },
+      {
+        ...spec('none'),
+        extraMounts: [
+          {
+            source: '/var/lib/team-workspace/deps/abc',
+            target: '/work/node_modules',
+            readonly: true,
+          },
+        ],
+      },
+      ['true']
+    );
+    const volumes = args.flatMap((a, i) =>
+      args[i - 1] === '--volume' ? [a] : []
+    );
+    expect(volumes).toEqual([
+      '/jobs/1/repo:/work:rw,Z',
+      '/var/lib/team-workspace/deps/abc:/work/node_modules:ro,z',
+    ]);
+  });
+
+  it('adds no SELinux label to extra mounts when /work has none', () => {
+    const args = buildRunArgs(
+      config,
+      {
+        ...spec('none'),
+        extraMounts: [{ source: '/deps/abc', target: '/x', readonly: true }],
+      },
+      ['true']
+    );
+    const volumes = args.flatMap((a, i) =>
+      args[i - 1] === '--volume' ? [a] : []
+    );
+    expect(volumes).toEqual(['/jobs/1/repo:/work:rw', '/deps/abc:/x:ro']);
+  });
+
   it('adds extra mounts with their read-only flag, and still no host variable', () => {
     process.env.VULTR_INFERENCE_API_KEY = 'must-not-leak';
     const args = buildRunArgs(

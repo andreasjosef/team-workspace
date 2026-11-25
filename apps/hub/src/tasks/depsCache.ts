@@ -1,10 +1,10 @@
+import { readRegularFile } from '@app/sandbox';
 import { createHash } from 'node:crypto';
 import {
   lstat,
   mkdir,
   mkdtemp,
   readdir,
-  readFile,
   rename,
   rm,
   writeFile,
@@ -30,17 +30,12 @@ export type Lockfile = {
 
 const SCRATCH_PREFIX = '.scratch-';
 
-// Regular files only: lstat, so a symlinked manifest doesn't count.
-const readRegular = async (path: string) => {
-  const s = await lstat(path).catch(() => null);
-  return s?.isFile() ? readFile(path) : null;
-};
-
 // The worktree's manifest and lockfile, or null when it has no lockfile (the
-// task then installs as before, uncached).
+// task then installs as before, uncached). Regular files only: a symlinked
+// manifest doesn't count.
 export const readLockfile = async (repo: string): Promise<Lockfile | null> => {
-  const lock = await readRegular(join(repo, 'package-lock.json'));
-  const packageJson = await readRegular(join(repo, 'package.json'));
+  const lock = await readRegularFile(join(repo, 'package-lock.json'));
+  const packageJson = await readRegularFile(join(repo, 'package.json'));
   if (!lock || !packageJson) return null;
   const key = createHash('sha256').update(lock).digest('hex');
   return { key, packageJson, lock };

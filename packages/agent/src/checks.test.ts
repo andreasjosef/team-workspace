@@ -138,6 +138,29 @@ describe('one run per check', () => {
     expect(r).toMatchObject({ typeErrors: 1, testsFailed: 1 });
   });
 
+  it('gives the model the end of a crashed tool output when no error line parses', () => {
+    const noise = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
+    const r = readCheckOutput(
+      checkOutput(
+        tool(`${noise}\ntsc: out of memory`, 134),
+        tool('Segmentation fault', 139)
+      )
+    );
+    expect(r).toMatchObject({ typeErrors: 1, testsFailed: 1 });
+    expect(r.errors).toContain('tsc exited with code 134');
+    expect(r.errors).toContain('tsc: out of memory');
+    expect(r.errors).toContain('line 49');
+    expect(r.errors).not.toContain('line 0\n');
+    expect(r.errors).toContain('vitest exited with code 139');
+    expect(r.errors).toContain('Segmentation fault');
+  });
+
+  it('says a crashed tool printed nothing rather than giving empty errors', () => {
+    const r = readCheckOutput(checkOutput(tool('', 0), tool('', 1)));
+    expect(r.testsFailed).toBe(1);
+    expect(r.errors).toBe('vitest exited with code 1 and printed nothing.');
+  });
+
   it.each([
     ['no markers at all', VITEST_GREEN],
     [

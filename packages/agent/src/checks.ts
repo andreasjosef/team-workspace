@@ -53,8 +53,7 @@ export const stripAnsi = (s: string) => s.replace(ANSI, '');
 // Type check and tests run in one `sh -c`, straight from the project's own
 // node_modules/.bin (no npx), with NO_COLOR=1. Markers on lines of their own
 // frame each tool's output and carry its exit code. stderr goes to stdout so
-// the two streams can't reorder around a marker. The shape is Henrik's
-// `runSandboxChecks` (5c303df).
+// the two streams can't reorder around a marker.
 //
 // node_modules may be the read-only dependency cache, and Vitest writes into
 // it by default: its results cache (node_modules/.vite/vitest) and, for a
@@ -63,6 +62,8 @@ export const stripAnsi = (s: string) => s.replace(ANSI, '');
 // config without a temp file. Checked with podman on a read-only mount.
 
 const MARK = 'TW-CHECK';
+const CRASH_TAIL_LINES = 20;
+const CRASH_TAIL_CHARS = 2000;
 
 export const checkCommand = (): string[] => [
   'sh',
@@ -140,13 +141,25 @@ export const readCheckOutput = (
   const { tsc, vitest } = split;
   const atLeastOne = (n: number, exitCode: number) =>
     exitCode !== 0 ? Math.max(1, n) : n;
+  // A tool that failed without a line topErrors recognises (it crashed, ran
+  // out of memory, couldn't load its config) still tells the model why: the
+  // end of what it printed.
+  const errorsOf = (run: ToolRun, name: string) => {
+    const top = topErrors(run.output);
+    if (top || run.exitCode === 0) return top;
+    const lines = run.output.trim().split('\n').slice(-CRASH_TAIL_LINES);
+    const end = lines.join('\n').slice(-CRASH_TAIL_CHARS);
+    return end
+      ? `${name} exited with code ${run.exitCode}:\n${end}`
+      : `${name} exited with code ${run.exitCode} and printed nothing.`;
+  };
   return {
     typeErrors: atLeastOne(countTypeErrors(tsc.output), tsc.exitCode),
     testsFailed: atLeastOne(
       countFailedTests(vitest.output, vitest.exitCode),
       vitest.exitCode
     ),
-    errors: `${topErrors(tsc.output)}\n${topErrors(vitest.output)}`.trim(),
+    errors: `${errorsOf(tsc, 'tsc')}\n${errorsOf(vitest, 'vitest')}`.trim(),
     testOutput: vitest.output,
   };
 };

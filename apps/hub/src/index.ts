@@ -30,8 +30,9 @@ if (env.RUNNER === 'real') {
   // Absolute too: cache entries are mounted at /work/node_modules.
   const depsCacheDir = resolve(env.DEPS_CACHE_DIR);
   await mkdir(depsCacheDir, { recursive: true });
-  const scratch = await removeLeftoverScratch(depsCacheDir);
-  if (scratch) console.log(`Removed ${scratch} unfinished dependency installs`);
+  const unfinished = await removeLeftoverScratch(depsCacheDir);
+  if (unfinished)
+    console.log(`Removed ${unfinished} unfinished dependency installs`);
   const removed = await removeLeftoverSandboxes(sandbox);
   if (removed) console.log(`Removed ${removed} leftover sandbox containers`);
   runner = createPipeline({

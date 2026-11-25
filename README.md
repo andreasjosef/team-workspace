@@ -49,7 +49,7 @@ The real runner needs the product repo as a git repository, because tasks branch
 cp -r demo/shop /tmp/shop && git -C /tmp/shop init -q -b main && git -C /tmp/shop add . && git -C /tmp/shop commit -qm init
 ```
 
-Then in `.env`: `RUNNER=real`, `HUB_REPO_DIR=/tmp/shop`, `VULTR_INFERENCE_API_KEY`, `INFERENCE_MODEL`, `TASKS_DIR=.tasks`, `DEPS_CACHE_DIR=.deps`. With rootless podman on Fedora also set `SANDBOX_DOCKER_BIN=podman`, `SANDBOX_VOLUME_OPTS=rw,z` (lower-case: the dependency cache is shared between sandboxes) and `SANDBOX_EXTRA_ARGS=--userns=keep-id`.
+Then in `.env`: `RUNNER=real`, `HUB_REPO_DIR=/tmp/shop`, `VULTR_INFERENCE_API_KEY`, `INFERENCE_MODEL`, `TASKS_DIR=.tasks`, `DEPS_CACHE_DIR=.deps`. With rootless podman on Fedora also set `SANDBOX_DOCKER_BIN=podman`, `SANDBOX_VOLUME_OPTS=rw,Z` and `SANDBOX_EXTRA_ARGS=--userns=keep-id`.
 
 ## Commands
 

@@ -10,9 +10,9 @@ export type SandboxConfig = {
   network: string;
   registryUrl: string;
   proxyUrl: string;
-  // Bind-mount options for /work. `rw,z` on SELinux hosts (Fedora + podman):
-  // lower-case, since the dependency cache is mounted by several sandboxes.
-  // Read-only mounts get the same options with `ro` in place of `rw`.
+  // Bind-mount options for /work. `rw,Z` on SELinux hosts (Fedora + podman).
+  // Extra mounts (the shared dependency cache) get the same options with
+  // their own access mode and a shared `z` label in place of `Z`.
   volumeOptions: string;
   // Escape hatch, e.g. `--userns=keep-id` for rootless podman.
   extraArgs: string[];

