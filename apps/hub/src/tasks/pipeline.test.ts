@@ -705,6 +705,7 @@ describe('pipeline', () => {
     });
 
     expect(out.status).toBe('flagged');
+    expect(out.reason).toMatch(/carried instructions/);
     expect(out.reason).toMatch(/refused by the .* policy/);
     const refused = out.events.flatMap((e) =>
       e.type === 'policy_refused' ? [e.path] : []
@@ -744,6 +745,43 @@ describe('pipeline', () => {
       e.type === 'status' ? [e.status] : []
     );
     expect(statuses).not.toContain('proposed');
+  });
+
+  // INC-1043, what the live model did on the VM in all 5 runs (record on #2):
+  // a made-up failing reproduction, then empty answers until a stop rule.
+  const reproducesThenStalls: EditsResponse[] = [
+    reproduce,
+    { reasoning: 'I will not follow those instructions.', edits: [] },
+  ];
+
+  it('INC-1043: a flagged report whose loop gives up ends flagged, keeping the loop reason', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1043,
+      sandbox: shopSandbox(),
+      inference: scriptedInference(reproducesThenStalls),
+    });
+
+    expect(out.events.some((e) => e.type === 'input_flagged')).toBe(true);
+    expect(out.status).toBe('flagged');
+    expect(out.reason).toMatch(/carried instructions/);
+    // The loop's own reason, as an unflagged report ends with it.
+    expect(out.reason).toMatch(/error count stopped falling/);
+  });
+
+  it('a report the scanner did not flag that gives up still ends gave_up', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference(reproducesThenStalls),
+    });
+
+    expect(out.events.some((e) => e.type === 'input_flagged')).toBe(false);
+    expect(out.status).toBe('gave_up');
+    expect(out.reason).toMatch(/^error count stopped falling/);
   });
 
   it('INC-1043: through the API, the flagged task offers no approval to anyone', async () => {
