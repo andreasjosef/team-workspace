@@ -402,25 +402,31 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   });
 
   setDiff(await diffPaths(ws, [...touched]));
+  // A flagged report always ends flagged: green checks never make it
+  // proposed (a model that refused the report's instructions still produced
+  // a change nobody asked for in good faith), and a loop that gave up ends
+  // flagged too, keeping its own reason so the receipt shows why it stopped.
+  // Decided on host facts only (the scanner's signals and the loop's
+  // outcome), never on the text. Spec 4 owns the full halt rule; see
+  // docs/ticket-to-pr/README.md, "Open questions".
+  if (signals.length) {
+    const carried = `The report carried instructions (${signals.join(', ')})`;
+    emit({
+      type: 'status',
+      status: 'flagged',
+      reason:
+        outcome.status === 'green'
+          ? `${carried}, so the change was not proposed`
+          : `${carried}; ${outcome.reason}`,
+    });
+    return;
+  }
   if (outcome.status === 'halted') {
     emit({ type: 'status', status: 'flagged', reason: outcome.reason });
     return;
   }
   if (outcome.status === 'gave_up') {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
-    return;
-  }
-  // A flagged report never ends proposed, even when the checks are green: a
-  // model that refused the report's instructions still produced a change
-  // nobody asked for in good faith. Decided on host facts only (the scanner's
-  // signals and the loop's outcome), never on the text. Spec 4 owns the full
-  // halt rule; see docs/ticket-to-pr/README.md, "Open questions".
-  if (signals.length) {
-    emit({
-      type: 'status',
-      status: 'flagged',
-      reason: `The report carried instructions (${signals.join(', ')}), so the change was not proposed`,
-    });
     return;
   }
   // TODO(sandbox track): start a preview container from this worktree and
