@@ -131,11 +131,24 @@ Then run the three scenarios from [demo/README.md](../demo/README.md).
 ## Updating
 
 ```sh
+ssh <you>@<vm-ip> sudo /opt/team-workspace/deploy/update.sh            # the branch it's on
+ssh <you>@<vm-ip> sudo /opt/team-workspace/deploy/update.sh <branch>   # switch branch first
+```
+
+It pulls (`--ff-only`, as `hub`), runs `pnpm install --frozen-lockfile` and the web build, rebuilds the sandbox image only if `packages/sandbox/image/` changed since the last update, re-installs the systemd unit only if `deploy/team-workspace-hub.service` changed, runs `docker compose --env-file .env --profile vm up -d --build`, restarts the hub (which forgets in-memory tasks) and fails unless `/api/health` answers on `127.0.0.1:3000` within 30 s. It prints the old and new commit. The last updated commit is kept in `/var/lib/team-workspace/last-update`; delete it to force a full rebuild. Safe to run twice; it never touches `.env`, the demo repo or the deps cache.
+
+There's no push-based deploy on purpose: that would put an SSH key with sudo on the VM into GitHub secrets.
+
+By hand, the core of it is:
+
+```sh
 cd /opt/team-workspace
-sudo -u hub git pull
+sudo -u hub git pull --ff-only
 sudo -u hub -H corepack pnpm install --frozen-lockfile
-sudo -u hub -H corepack pnpm --filter @app/web build   # Caddy serves the new dist at once
-sudo systemctl restart team-workspace-hub              # forgets in-memory tasks
+sudo -u hub -H corepack pnpm --filter @app/web build
+sudo docker build -t team-workspace-sandbox:latest packages/sandbox/image   # if it changed
+sudo docker compose --env-file .env --profile vm up -d --build
+sudo systemctl restart team-workspace-hub
 ```
 
 ## Dependency cache
