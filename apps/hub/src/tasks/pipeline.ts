@@ -18,11 +18,12 @@ import {
   type Inference,
 } from '@app/agent';
 import { fail, ok } from '@app/shared';
-import type {
-  fetchDenied,
-  NetworkMode,
-  runInSandbox,
-  SandboxConfig,
+import {
+  scanInstallScripts,
+  type fetchDenied,
+  type NetworkMode,
+  type runInSandbox,
+  type SandboxConfig,
 } from '@app/sandbox';
 import { lstat, readFile } from 'node:fs/promises';
 import { reloadHub, type Hub } from '../hub/load.ts';
@@ -177,6 +178,23 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       type: 'status',
       status: 'error',
       reason: 'Installing dependencies failed or tried to reach the network',
+    });
+    return;
+  }
+  // What the install left in node_modules, read on the host, never run.
+  const flagged = (await scanInstallScripts(ws.repo)).filter(
+    (s) => s.suspicious
+  );
+  for (const s of flagged)
+    emit({
+      type: 'log',
+      message: `Install script flagged: ${s.pkg} ${s.hook} (${s.reasons.join(', ')}): ${tail(s.script, 500)}`,
+    });
+  if (flagged.length) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `Suspicious install script in ${[...new Set(flagged.map((s) => s.pkg))].join(', ')}`,
     });
     return;
   }
