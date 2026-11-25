@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { Link } from 'react-router';
-import { Dot, RoleScope, Status, TaskList } from '../components/common.tsx';
-import { TaskForm } from '../components/TaskForm.tsx';
-import { useIncidents, useRoles, useTasks } from '../queries.ts';
-import { createdBy, taskForIncident, timeAgo, type Tone } from '../taskView.ts';
+import type { Incident } from '@app/shared';
+import { useSearchParams } from 'react-router';
+import { Dot, Status } from '../components/common.tsx';
+import { ForwardButton } from '../components/ForwardButton.tsx';
+import { OutcomeCard } from '../components/Outcome.tsx';
+import { ReceiptTabs } from '../components/Receipt.tsx';
+import { useIncidents, useTasks } from '../queries.ts';
+import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
 
 const severityTone: Record<string, Tone> = {
   high: 'red',
@@ -11,99 +13,74 @@ const severityTone: Record<string, Tone> = {
   low: 'muted',
 };
 
-// The CS rep's workspace: what customers are reporting, and one button from a
-// report to an agent that reproduces and fixes it. The report goes in as the
-// customer wrote it, which is exactly why the agent behind it is boxed in.
+// The support rep's cockpit: the inbox of customer reports on the left, and
+// the one they're working on in the middle. Forwarding a report keeps them
+// here; the agent's progress, the outcome and the receipt fill in in place.
 export const CsView = () => {
-  const incidents = useIncidents().data ?? [];
-  const allTasks = useTasks().data ?? [];
-  const mine = createdBy(allTasks, 'cs');
-  const role = useRoles().data?.find((r) => r.name === 'cs');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = incidents.find((i) => i.id === selectedId) ?? incidents[0];
-  const existing = selected && taskForIncident(allTasks, selected.id);
+  const reports = useIncidents().data ?? [];
+  const tasks = useTasks().data ?? [];
+  const [params, setParams] = useSearchParams();
+  const selected =
+    reports.find((r) => r.id === params.get('report')) ?? reports[0];
 
   return (
-    <div className="cols cols-3">
-      <section className="panel">
-        <h2>Latest incidents</h2>
+    <div className="cockpit">
+      <aside className="inbox" aria-label="Customer reports">
+        <h2>Inbox</h2>
         <ul className="list">
-          {incidents.map((i) => {
-            const task = taskForIncident(allTasks, i.id);
+          {reports.map((r) => {
+            const task = taskForIncident(tasks, r.id);
             return (
-              <li key={i.id}>
+              <li key={r.id}>
                 <button
-                  className={`item ${i.id === selected?.id ? 'selected' : ''}`}
-                  onClick={() => setSelectedId(i.id)}
+                  className={`item ${r.id === selected?.id ? 'selected' : ''}`}
+                  onClick={() => setParams({ report: r.id })}
                 >
                   <span className="item-title">
-                    <Dot tone={severityTone[i.severity] ?? 'muted'} />
-                    {i.subject}
+                    <Dot tone={severityTone[r.severity] ?? 'muted'} />
+                    {r.subject}
                   </span>
                   <span className="item-meta">
-                    {i.customer} · {i.channel} · {timeAgo(i.at)}
-                    {task && (
-                      <>
-                        {' '}
-                        · <Status status={task.status} />
-                      </>
-                    )}
+                    {task ? <Status status={task.status} /> : <span>New</span>}{' '}
+                    · {r.customer} · {timeAgo(r.at)}
                   </span>
                 </button>
               </li>
             );
           })}
         </ul>
-      </section>
+        {reports.length === 0 && <p className="empty">No reports.</p>}
+      </aside>
 
-      <section className="panel">
+      <main className="focus">
         {selected ? (
-          <>
-            <h2>
-              {selected.id} · {selected.severity}
-            </h2>
-            <h3 style={{ marginTop: 0 }}>{selected.subject}</h3>
-            <div className="untrusted-label">
-              {selected.customer} wrote, via {selected.channel}
-            </div>
-            <p className="untrusted">{selected.body}</p>
-            {existing ? (
-              <p>
-                <Link to={`/cs/tasks/${existing.id}`}>
-                  Open the agent's task
-                </Link>{' '}
-                <Status status={existing.status} />
-              </p>
-            ) : (
-              <TaskForm
-                key={selected.id}
-                role="cs"
-                kinds={['bug']}
-                submitLabel="Ask the agent to fix it"
-                draft={{
-                  title: selected.subject,
-                  text: selected.body,
-                  incidentId: selected.id,
-                }}
-              />
-            )}
-          </>
+          <Report report={selected} />
         ) : (
-          <p className="empty">No incidents.</p>
+          <p className="empty">Pick a report.</p>
         )}
-      </section>
-
-      <section>
-        <div className="panel">
-          <h2>My reports</h2>
-          <TaskList
-            tasks={mine}
-            role="cs"
-            empty="None yet. Pick an incident."
-          />
-        </div>
-        <RoleScope role={role} />
-      </section>
+      </main>
     </div>
+  );
+};
+
+const Report = ({ report }: { report: Incident }) => {
+  const tasks = useTasks().data ?? [];
+  const task = taskForIncident(tasks, report.id);
+  return (
+    <>
+      <p className="muted small focus-meta">
+        {report.id} · {report.severity} · {report.customer} via {report.channel}{' '}
+        · {timeAgo(report.at)}
+      </p>
+      <h1 className="focus-title">{report.subject}</h1>
+      {task && <OutcomeCard task={task} role="cs" />}
+      <section className="message">
+        <div className="untrusted-label">
+          {report.customer} wrote · treated as untrusted
+        </div>
+        <p className="untrusted">{report.body}</p>
+      </section>
+      {task ? <ReceiptTabs task={task} /> : <ForwardButton report={report} />}
+    </>
   );
 };

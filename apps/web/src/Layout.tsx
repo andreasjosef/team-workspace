@@ -1,40 +1,23 @@
 import { Role } from '@app/shared';
-import { Link, NavLink, Outlet, useParams } from 'react-router';
-import { useRoles } from './queries.ts';
+import { Link, Outlet, useParams } from 'react-router';
 
-const taglines: Record<Role, string> = {
-  dev: 'Review what the team and its agents propose',
-  po: 'Decisions, docs and changes with a preview',
-  cs: 'From customer report to proposed fix',
-};
-
-// No auth in the demo: the role is picked here and travels in the URL. The
-// hub still checks it on every approval against the role policies.
+// No auth in the demo: the role travels in the URL, and the hub checks it on
+// every approval against the role policies. The support rep's view is the
+// product; a developer only lands here from a review link.
 export const Layout = () => {
   const role = Role.safeParse(useParams().role);
-  const roles = useRoles().data ?? [];
+  const reviewing = role.success && role.data !== 'cs';
 
   return (
     <div className="shell">
       <header className="topbar">
-        <Link to="/" className="brand">
+        <Link to="/cs" className="brand">
           Team Workspace
-          {role.success && <small>{taglines[role.data]}</small>}
+          <small>From customer report to proposed fix</small>
         </Link>
-        <nav className="tabs" aria-label="Role">
-          {(roles.length
-            ? roles
-            : Role.options.map((name) => ({ name, label: name }))
-          ).map((r) => (
-            <NavLink
-              key={r.name}
-              to={`/${r.name}`}
-              className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}
-            >
-              {r.label}
-            </NavLink>
-          ))}
-        </nav>
+        {reviewing && (
+          <span className="topbar-note">Reviewing as {role.data}</span>
+        )}
       </header>
       <Outlet />
     </div>

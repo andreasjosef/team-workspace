@@ -2,20 +2,15 @@ import { Role } from '@app/shared';
 import { createBrowserRouter, Navigate, useParams } from 'react-router';
 import { Layout } from './Layout.tsx';
 import { CsView } from './pages/CsView.tsx';
-import { DevView } from './pages/DevView.tsx';
-import { PoView } from './pages/PoView.tsx';
 import { TaskPage } from './pages/TaskPage.tsx';
 
-const views = { dev: DevView, po: PoView, cs: CsView } satisfies Record<
-  Role,
-  () => unknown
->;
-
+// The product is the support rep's view. A task page still works under any
+// role's URL (`/dev/tasks/:id` is where a developer approves until pull
+// requests replace in-hub approval), but only cs has a home.
 const RoleHome = () => {
   const role = Role.safeParse(useParams().role);
-  if (!role.success) return <Navigate to="/cs" replace />;
-  const View = views[role.data];
-  return <View />;
+  if (!role.success || role.data !== 'cs') return <Navigate to="/cs" replace />;
+  return <CsView />;
 };
 
 export const router = createBrowserRouter([

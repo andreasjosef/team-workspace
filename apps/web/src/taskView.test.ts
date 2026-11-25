@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   canApprove,
   canReject,
-  devColumns,
+  outcome,
+  progress,
+  reproduced,
   taskForIncident,
   timeAgo,
 } from './taskView.ts';
@@ -49,19 +51,64 @@ describe('who decides', () => {
   });
 });
 
-describe('devColumns', () => {
-  it('sorts tasks into the board', () => {
-    const cols = devColumns([
-      task({ id: 'a' }),
-      task({ id: 'b', status: 'flagged' }),
-      task({ id: 'c', status: 'working' }),
-      task({ id: 'd', status: 'deployed' }),
+const iters = (...failing: number[]) =>
+  failing.map((testsFailed, n) => ({ n, typeErrors: 0, testsFailed }));
+
+describe('plain words for the support rep', () => {
+  it('counts a reproduction only when a check fails more than the baseline', () => {
+    expect(reproduced(task({ iterations: iters(0, 0, 2, 0) }))).toBe(true);
+    expect(reproduced(task({ iterations: iters(0, 0) }))).toBe(false);
+    expect(reproduced(task({ iterations: iters(1, 1) }))).toBe(false);
+  });
+
+  it('says a proposed fix is in review, with a line for the customer', () => {
+    const o = outcome(task({ iterations: iters(0, 1, 0) }));
+    expect(o.headline).toBe('A fix is ready for review');
+    expect(o.tone).toBe('gold');
+    expect(o.customer).toMatch(/confirmed/);
+  });
+
+  it('says what the agent is doing while it works', () => {
+    expect(
+      outcome(task({ status: 'working', phase: 'context' })).detail
+    ).toMatch(/decisions/);
+    expect(
+      outcome(task({ status: 'working', phase: 'fix', iterations: iters(0) }))
+        .detail
+    ).toMatch(/Reproducing/);
+    expect(
+      outcome(
+        task({ status: 'working', phase: 'fix', iterations: iters(0, 1) })
+      ).detail
+    ).toMatch(/fix/);
+  });
+
+  it('tells the customer nothing about a flagged report', () => {
+    const o = outcome(task({ status: 'flagged' }));
+    expect(o.tone).toBe('red');
+    expect(o.customer).toBeNull();
+  });
+
+  it('walks the steps: reported, reproduced, fixed, review', () => {
+    const states = (t: TaskSnapshot) => progress(t).map((s) => s.state);
+    expect(states(task({ iterations: iters(0, 1, 0) }))).toEqual([
+      'done',
+      'done',
+      'done',
+      'current',
     ]);
     expect(
-      [cols.review, cols.flagged, cols.active, cols.closed].map((c) =>
-        c.map((t) => t.id)
-      )
-    ).toEqual([['a'], ['b'], ['c'], ['d']]);
+      states(task({ status: 'working', phase: 'fix', iterations: iters(0) }))
+    ).toEqual(['done', 'current', 'todo', 'todo']);
+    expect(
+      states(task({ status: 'gave_up', iterations: iters(0, 1, 1, 1) }))
+    ).toEqual(['done', 'done', 'stopped', 'todo']);
+    expect(
+      states(task({ status: 'rejected', iterations: iters(0, 1, 0) }))
+    ).toEqual(['done', 'done', 'done', 'stopped']);
+    expect(
+      states(task({ status: 'deployed', iterations: iters(0, 1, 0) }))
+    ).toEqual(['done', 'done', 'done', 'done']);
   });
 });
 
