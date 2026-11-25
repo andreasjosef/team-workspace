@@ -303,7 +303,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   emit({ type: 'phase', phase: 'fix' });
   let refusals = 0;
   const touched = new Set<string>();
-  const inScope = (edits: Edit[]): Result<null> => {
+  const checkRoleScope = (edits: Edit[]): Result<null> => {
     const verdict = checkPolicy(policy, edits);
     if (verdict.ok) return ok(null);
     for (const r of verdict.refusals)
@@ -320,18 +320,18 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     first,
     // A bug is reproduced before it's fixed. The kind is the validated task
     // kind the role picked, not anything read from the task text.
-    ...(input.kind === 'bug'
-      ? {
-          reproduce: {
-            discard: async (paths: string[]) => {
-              for (const path of paths) {
-                touched.delete(path);
-                await removeInside(ws.repo, path);
-              }
-            },
-          },
-        }
-      : {}),
+    reproduceFirst: input.kind === 'bug',
+    // A path that couldn't be taken out stays in `touched`: it may still be
+    // in the worktree, so it stays in the diff for the reviewer to see.
+    discard: async (paths: string[]) => {
+      const left: string[] = [];
+      for (const path of paths) {
+        const removed = await removeInside(ws.repo, path);
+        if (removed.success) touched.delete(path);
+        else left.push(removed.message);
+      }
+      return left.length ? fail('invalid', left.join('; ')) : ok(null);
+    },
     halt: () =>
       networkAttempt
         ? 'A test run tried to reach the network'
@@ -369,9 +369,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     // The loop runs this on every answer, before a bug's step rule; apply
     // runs it again before writing. An answer that passed once passes again,
     // so each refusal is emitted and counted once.
-    checkScope: inScope,
+    checkScope: checkRoleScope,
     apply: async (edits) => {
-      const scope = inScope(edits);
+      const scope = checkRoleScope(edits);
       if (!scope.success) return scope;
       const applied = await applyEdits(ws.repo, edits);
       if (!applied.success) return applied;
@@ -432,11 +432,19 @@ const readInside = async (root: string, path: string) => {
 };
 
 // Takes out a file the agent created (a reproduction that didn't fail). Only
-// a regular file, reached without following a symlink: a test run could have
-// swapped it for anything since.
-const removeInside = async (root: string, path: string) => {
+// a regular file, reached without following a symlink (resolveInside refuses
+// a symlink anywhere on the path, parent folders included): a test run could
+// have swapped it for anything since. Already gone counts as taken out.
+const removeInside = async (
+  root: string,
+  path: string
+): Promise<Result<null>> => {
   const resolved = await resolveInside(root, path);
-  if (!resolved.success) return;
-  const s = await lstat(resolved.value).catch(() => null);
-  if (s?.isFile()) await rm(resolved.value);
+  if (!resolved.success)
+    return resolved.code === 'not_found' ? ok(null) : resolved;
+  const s = await lstat(resolved.value);
+  if (!s.isFile())
+    return fail('invalid', `Not a regular file, left in place: ${path}`);
+  await rm(resolved.value);
+  return ok(null);
 };

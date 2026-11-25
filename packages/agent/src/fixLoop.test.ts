@@ -21,7 +21,11 @@ const together: EditsResponse = {
 // `answers` are the model's replies in order; the last one repeats.
 const bugTask = async (
   answers: EditsResponse[],
-  { reproFails = true, rules = { maxIterations: 6, patience: 2 } } = {}
+  {
+    reproFails = true,
+    discardFails = false,
+    rules = { maxIterations: 6, patience: 2 },
+  } = {}
 ) => {
   const files = new Set<string>();
   const asked: {
@@ -46,11 +50,12 @@ const bugTask = async (
       for (const e of edits) files.add(e.path);
       return ok(null);
     },
-    reproduce: {
-      discard: async (paths) => {
-        discarded.push(paths);
-        for (const p of paths) files.delete(p);
-      },
+    reproduceFirst: true,
+    discard: async (paths) => {
+      discarded.push(paths);
+      if (discardFails) return fail('invalid', `${paths[0]}: not a file`);
+      for (const p of paths) files.delete(p);
+      return ok(null);
     },
     onIteration: (_n, c) => curve.push(c.testsFailed),
     baseline: clean,
@@ -111,6 +116,19 @@ describe('runTaskLoop, bug task', () => {
     });
   });
 
+  it('says so when a reproduction could not be discarded', async () => {
+    const bug = await bugTask([reproduction], {
+      reproFails: false,
+      discardFails: true,
+      rules: { maxIterations: 2, patience: 2 },
+    });
+    expect(bug.asked[1]?.lastRejection).toContain(
+      `Not all discarded: ${REPRO}: not a file`
+    );
+    expect(bug.asked[1]?.lastRejection).not.toContain('Discarded:');
+    expect(bug.result).toMatchObject({ status: 'gave_up', applied: 0 });
+  });
+
   it('rejects an edit to the reproduction in the fix step', async () => {
     const touchRepro: EditsResponse = {
       edits: [{ path: REPRO, search: 'fails', replace: 'passes' }],
@@ -130,6 +148,7 @@ describe('runTaskLoop, bug task', () => {
   it('checks the scope before the step, so the policy sees every answer', async () => {
     const scoped: string[][] = [];
     const propose = vi.fn(async () => ok(together));
+    const apply = vi.fn(async () => ok(null));
     await runTaskLoop({
       check: async () => ({ ...clean, errors: '' }),
       propose,
@@ -137,16 +156,20 @@ describe('runTaskLoop, bug task', () => {
         scoped.push(edits.map((e) => e.path));
         return fail('forbidden', 'src/a.ts: deny src/**');
       },
-      apply: async () => ok(null),
-      reproduce: { discard: async () => {} },
+      apply,
+      reproduceFirst: true,
+      discard: async () => ok(null),
       onIteration: () => {},
       baseline: clean,
       rules: { maxIterations: 2, patience: 5 },
     });
+    // Once per answer, and a refused answer never reaches apply (where the
+    // hub would check, and count, its refusals a second time).
     expect(scoped).toEqual([
       [REPRO, 'src/a.ts'],
       [REPRO, 'src/a.ts'],
     ]);
+    expect(apply).not.toHaveBeenCalled();
     expect(propose.mock.calls[1]).toEqual([
       expect.objectContaining({ lastRejection: 'src/a.ts: deny src/**' }),
     ]);

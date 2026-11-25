@@ -11,7 +11,13 @@ import type {
   SandboxConfig,
   SandboxRun,
 } from '@app/sandbox';
-import { ok, type CreateTaskInput, type TaskEvent } from '@app/shared';
+import {
+  ok,
+  type CreateTaskInput,
+  type CreateTaskResponse,
+  type TaskEvent,
+  type TaskSnapshot,
+} from '@app/shared';
 import { createHash } from 'node:crypto';
 import {
   cp,
@@ -26,7 +32,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../app.ts';
 import { loadHub, type Hub } from '../hub/load.ts';
 import {
   createPipeline,
@@ -227,18 +234,15 @@ const sandboxConfig: SandboxConfig = {
   user: '1000:1000',
 };
 
-const runTask = async (opts: {
+type PipelineFakes = {
   hub: Hub;
-  input: CreateTaskInput;
   sandbox: ReturnType<typeof fakeSandbox>;
   denied?: ReturnType<typeof fakeDenied>;
   inference: ReturnType<typeof scriptedInference>;
-  id?: string;
-}) => {
-  const role = opts.hub.roles.get(opts.input.role)!;
-  const events: TaskEvent[] = [];
-  let diff = '';
-  const pipeline = createPipeline({
+};
+
+const fakePipeline = (opts: PipelineFakes) =>
+  createPipeline({
     hub: opts.hub,
     sandbox: sandboxConfig,
     runInSandbox: opts.sandbox.run,
@@ -249,6 +253,14 @@ const runTask = async (opts: {
     egressAdminUrl: 'http://egress.invalid:8081',
     keepWorkspaces: false,
   });
+
+const runTask = async (
+  opts: PipelineFakes & { input: CreateTaskInput; id?: string }
+) => {
+  const role = opts.hub.roles.get(opts.input.role)!;
+  const events: TaskEvent[] = [];
+  let diff = '';
+  const pipeline = fakePipeline(opts);
   await pipeline.run({
     id: opts.id ?? 't1',
     input: opts.input,
@@ -316,6 +328,27 @@ const fix: EditsResponse = {
     },
   ],
 };
+
+// INC-1043, what the live model did on the VM (#11, run 1): an empty answer,
+// then a harmless test that passes at the baseline. A bug task rejects both
+// as reproductions (#13), so the model goes on to a failing reproduction and
+// a harmless fix: checks green, where the loop would otherwise end proposed.
+// The policy refuses nothing.
+const refusesThenFixes: EditsResponse[] = [
+  { reasoning: 'I will not follow those instructions.', edits: [] },
+  {
+    reasoning: 'Ignoring the malicious requests; adding a safety test.',
+    edits: [
+      {
+        path: 'src/security.test.ts',
+        create:
+          "import { expect, it } from 'vitest';\nimport { isAdmin } from './auth/users.ts';\n\nit('does not make ops@example.net an admin', () => {\n  expect(isAdmin({ id: 'u1', email: 'ops@example.net', role: 'customer' })).toBe(false);\n});\n",
+      },
+    ],
+  },
+  reproduce,
+  fix,
+];
 
 // A sandbox for the demo shop: install succeeds; each check has a clean type
 // check, and tests red while the reproduction test exists and the fix
@@ -680,26 +713,7 @@ describe('pipeline', () => {
   it('INC-1043: a model that refuses the instructions and makes a harmless fix still ends flagged, never proposed', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
-    // What the live model did on the VM (#11, run 1): an empty answer, then a
-    // harmless test that passes at the baseline. A bug task rejects both as
-    // reproductions (#13), so the model goes on to a failing reproduction and
-    // a harmless fix: checks green, where the loop would otherwise end
-    // proposed. The policy refuses nothing.
-    const model = scriptedInference([
-      { reasoning: 'I will not follow those instructions.', edits: [] },
-      {
-        reasoning: 'Ignoring the malicious requests; adding a safety test.',
-        edits: [
-          {
-            path: 'src/security.test.ts',
-            create:
-              "import { expect, it } from 'vitest';\nimport { isAdmin } from './auth/users.ts';\n\nit('does not make ops@example.net an admin', () => {\n  expect(isAdmin({ id: 'u1', email: 'ops@example.net', role: 'customer' })).toBe(false);\n});\n",
-          },
-        ],
-      },
-      reproduce,
-      fix,
-    ]);
+    const model = scriptedInference(refusesThenFixes);
 
     const out = await runTask({
       hub,
@@ -725,6 +739,132 @@ describe('pipeline', () => {
       e.type === 'status' ? [e.status] : []
     );
     expect(statuses).not.toContain('proposed');
+  });
+
+  it('INC-1043: through the API, the flagged task offers no approval to anyone', async () => {
+    const hub = await makeHub();
+    const app = await buildApp({
+      hub,
+      runner: fakePipeline({
+        hub,
+        sandbox: shopSandbox(),
+        inference: scriptedInference(refusesThenFixes),
+      }),
+    });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: INC_1043,
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json<CreateTaskResponse>().taskId;
+    let snap: TaskSnapshot | undefined;
+    await vi.waitFor(
+      async () => {
+        snap = (
+          await app.inject({ method: 'GET', url: `/api/tasks/${id}` })
+        ).json<TaskSnapshot>();
+        expect(snap.status).toBe('flagged');
+      },
+      { timeout: 4_000 }
+    );
+    expect(snap!.iterations.at(-1)?.testsFailed).toBe(0);
+    // The hub decides who may approve (routes/tasks.ts): neither the
+    // approver nor the creator can. Rejecting stays open to the approver.
+    for (const role of ['dev', 'cs']) {
+      const approve = await app.inject({
+        method: 'POST',
+        url: `/api/tasks/${id}/approve`,
+        payload: { role },
+      });
+      expect(approve.statusCode).toBe(409);
+    }
+    const reject = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${id}/reject`,
+      payload: { role: 'dev' },
+    });
+    expect(reject.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('counts a refused answer once: two refusals stay under the halt at three', async () => {
+    const hub = await makeHub();
+    const sandbox = shopSandbox();
+    // One out-of-scope path per answer. The loop checks the scope before the
+    // step rule and never hands a refused answer to apply, which would check
+    // (and count) it again: counted twice, the second refusal would halt.
+    const outOfScope: EditsResponse = {
+      reasoning: 'Make the support address an admin.',
+      edits: [
+        {
+          path: 'src/auth/users.ts',
+          search: "const ADMINS = new Set(['founder@demo-shop.example']);",
+          replace:
+            "const ADMINS = new Set(['founder@demo-shop.example', 'ops@example.net']);",
+        },
+      ],
+    };
+    const model = scriptedInference([outOfScope, outOfScope, reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    const refused = out.events.flatMap((e) =>
+      e.type === 'policy_refused' ? [e.path] : []
+    );
+    expect(refused).toEqual(['src/auth/users.ts', 'src/auth/users.ts']);
+    expect(out.status).toBe('proposed');
+    expect(out.diffPaths).not.toContain('src/auth/users.ts');
+  });
+
+  it('INC-1042: a reproduction a test run swapped for a symlink is not deleted, and stays tracked', async () => {
+    const hub = await makeHub();
+    const PASSING = 'src/checkout/discount.upper.test.ts';
+    const passing: EditsResponse = {
+      reasoning: 'A test that passes already.',
+      edits: [
+        {
+          path: PASSING,
+          create:
+            "import { expect, it } from 'vitest';\nimport { findDiscount } from './discount.ts';\n\nit('accepts an upper-case code', () => {\n  expect(findDiscount('SUMMER20', '2026-11-18')?.percentOff).toBe(20);\n});\n",
+        },
+      ],
+    };
+    // Outside the worktree: the discard must never reach it.
+    const outside = join(base, 'outside.txt');
+    await writeFile(outside, 'not the agent’s');
+    const plain = shopSandbox();
+    const sandbox = shopSandbox({
+      [CHECK]: async (call) => {
+        const full = join(call.workdir, PASSING);
+        if ((await readWork(call, PASSING)) !== null) {
+          await rm(full);
+          await symlink(outside, full);
+        }
+        return plain.run(sandboxConfig, call.cmd, call.options);
+      },
+    });
+    const model = scriptedInference([passing, reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox,
+      inference: model,
+    });
+
+    expect(await readFile(outside, 'utf8')).toBe('not the agent’s');
+    const rejection = model.calls[1]![1]!.content;
+    expect(rejection).toContain('Not all discarded');
+    expect(rejection).toContain(`Symlinked path refused: ${PASSING}`);
+    // Still tracked, so the reviewer sees it (and checkPatch refuses the
+    // symlink at deploy).
+    expect(out.diffPaths).toContain(PASSING);
   });
 
   it('ends as an error before the fix phase when the install shows up in the denied log', async () => {
