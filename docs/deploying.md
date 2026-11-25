@@ -2,6 +2,8 @@
 
 Everything runs on one VM: Caddy, Verdaccio and the egress proxy in Docker Compose; the hub as a systemd service on the host (it starts sandbox containers, so it doesn't live in one).
 
+**The quick way:** `bash deploy/vm-wizard.sh` from your laptop walks you through steps 1–5 below over SSH, runs the network checks, and probes the models you name. It remembers its answers in `~/.local/state/team-workspace-vm/`, so it's safe to stop and re-run. The steps below are what it does.
+
 ## 1. Create the VM
 
 - A dedicated SSH key for this VM, with a passphrase, in your ssh-agent: `ssh-keygen -t ed25519 -f ~/.ssh/team-workspace-vultr && ssh-add ~/.ssh/team-workspace-vultr`. Add its `.pub` under Vultr → Settings → SSH Keys.
@@ -86,7 +88,7 @@ In `.env`:
 | `DOMAIN`                  | `<vm-ip>.sslip.io`: a real certificate with no DNS setup                    |
 | `NODE_ENV`                | `production`                                                                |
 
-**The model.** `deepseek-v4.1-flash-1017` is pinned: given the hub's real first prompt for INC-1042, it answered in the JSON edit format with a Vitest reproduction 5 times out of 5 (1.2–1.9 s each, 2026-11-25). Before switching models, list `/v1/models` and check the new one the same way; a 401 there means the key, not the model.
+**The model.** `deepseek-v4.1-flash-1017` is pinned: given the hub's real first prompt for INC-1042, it answered in the JSON edit format with a Vitest reproduction 5 times out of 5 (1.2–1.9 s each, 2026-11-25). Before switching models, list `/v1/models` and check the new one the same way with `node deploy/probe-model.ts <model> 5` (it reads the key from stdin; usage at the top of the file). A 401 there means the key, not the model.
 
 Then start everything:
 
