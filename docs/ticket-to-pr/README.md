@@ -126,9 +126,9 @@ Done means all of this works on the Vultr VM, with a live model and real sandbox
 
 ## From `main` to this
 
-Most of it exists. What changes:
+Most of it exists. What changes (specs 1 and 2 closed the first three rows):
 
-| Area             | On `main` today                                                           | Needed                                                                                                             |
+| Area             | First version                                                             | Needed                                                                                                             |
 | ---------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Real pipeline    | Written, never run end to end                                             | Runs on the VM: [Spec 1](spec-1-real-pipeline-on-vm.md)                                                            |
 | After green      | Waits for dev approval in the hub, then commits to the hub's `main`       | Push `task/<id>` and open a PR. No in-hub approval.                                                                |

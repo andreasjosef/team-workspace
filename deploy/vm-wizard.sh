@@ -384,26 +384,35 @@ guide_note "Setup script"
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Product repo and app build"
-say "Hands the checkout and its deploy key to the hub user, creates the demo"
-say "product repo (tagged demo-start), installs, builds the web app and the sandbox image."
-vm "bash -s -- $REMOTE_DIR $DEPLOY_KEY" <<'EOF'
-set -eu; dir=$1; key=$2
+say "Hands the checkout and its deploy key to the hub user, clones the GitHub demo"
+say "repo as the hub repo, installs, builds the web app and the sandbox image."
+note "The demo repo must exist already: docs/deploying.md, section 3 (repo, ruleset, label, token)."
+ask GITHUB_REPO "Demo repo on GitHub (owner/name):"
+[[ "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { warn "not owner/name: $GITHUB_REPO"; exit 1; }
+write_env GITHUB_REPO "$GITHUB_REPO"
+vm "bash -s -- $REMOTE_DIR $DEPLOY_KEY $GITHUB_REPO" <<'EOF'
+set -eu; dir=$1; key=$2; demo=$3
 sudo install -d -m 700 -o hub -g hub /home/hub/.ssh
 sudo install -m 600 -o hub -g hub "$key" /home/hub/.ssh/deploy_key
 sudo chown -R hub:hub "$dir"
 cd "$dir"
 sudo -u hub -H git config core.sshCommand "ssh -i /home/hub/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+# The hub repo is a clone of the demo repo: the hub fetches its main before
+# each task and pushes task/<id> to its origin. No credentials in the URL.
 repo=/var/lib/team-workspace/repo
+url="https://github.com/$demo.git"
 if [ ! -d "$repo/.git" ]; then
-  sudo -u hub cp -r "$dir/demo/shop/." "$repo/"
-  cd "$repo"
-  sudo -u hub git init -q -b main
-  sudo -u hub git add .
-  sudo -u hub git -c user.name=hub -c user.email=hub@localhost commit -qm "Demo shop"
-  sudo -u hub git tag demo-start
-  echo "  product repo created and tagged demo-start"
+  sudo -u hub -H git clone -q "$url" "$repo"
+  echo "  hub repo cloned from $url"
 else
-  echo "  product repo already there"
+  origin=$(sudo -u hub -H git -C "$repo" remote get-url origin 2>/dev/null || echo none)
+  if [ "$origin" = "$url" ]; then
+    echo "  hub repo already cloned from $url"
+  else
+    echo "  ! $repo exists with origin '$origin', not $url."
+    echo "    Move it aside (sudo mv $repo $repo.old && sudo install -d -o hub -g hub $repo) and re-run."
+    exit 1
+  fi
 fi
 cd "$dir"
 sudo -u hub -H env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
@@ -435,6 +444,20 @@ printf '%s\n' "$GVISOR"                                | vm_env SANDBOX_RUNTIME
 printf '%s\n' http://172.28.0.2:8080                   | vm_env SANDBOX_PROXY_URL
 printf '%s\n' "$DOMAIN"                                | vm_env DOMAIN
 printf '%s\n' production                               | vm_env NODE_ENV
+printf '%s\n' "$GITHUB_REPO"                           | vm_env GITHUB_REPO
+if vm "sudo grep -q '^GITHUB_TOKEN=..*' $REMOTE_DIR/.env"; then
+  note "The VM .env already has a GitHub token. Enter keeps it; paste to replace it."
+fi
+say "Copy the demo repo's fine-grained token from the team's password manager"
+say "(Contents and Pull requests read/write, Metadata read; only $GITHUB_REPO)."
+GITHUB_TOKEN=""
+read -rs -p "  Paste the token (hidden): " GITHUB_TOKEN || true
+printf '\n'
+GITHUB_TOKEN=$(printf '%s' "$GITHUB_TOKEN" | sed $'s/\x1b\\[20[01]~//g' | tr -d '[:space:][:cntrl:]')
+if [[ -n "$GITHUB_TOKEN" ]]; then
+  printf '%s\n' "$GITHUB_TOKEN" | vm_env GITHUB_TOKEN
+fi
+GITHUB_TOKEN=""
 guide_note ".env"
 
 # ── 8 ─────────────────────────────────────────────────────────────────────

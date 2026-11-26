@@ -1,7 +1,6 @@
 import type {
   CreateTaskInput,
   EventEnvelope,
-  Role,
   TaskEvent,
   TaskSnapshot,
 } from '@app/shared';
@@ -21,18 +20,12 @@ type TaskRecord = Omit<TaskSnapshot, 'hasDiff'> & {
 
 const MAX_TASKS = 200;
 const MAX_EVENTS = 5000;
-const FINISHED = new Set([
-  'gave_up',
-  'flagged',
-  'rejected',
-  'deployed',
-  'error',
-]);
+const FINISHED = new Set(['pr_opened', 'gave_up', 'flagged', 'error']);
 
 export const createTaskStore = () => {
   const tasks = new Map<string, TaskRecord>();
 
-  const create = (input: CreateTaskInput, approver: Role | null) => {
+  const create = (input: CreateTaskInput) => {
     // Forget the oldest task once full; Maps iterate in insertion order.
     if (tasks.size >= MAX_TASKS) tasks.delete(tasks.keys().next().value!);
     const id = randomUUID();
@@ -44,8 +37,8 @@ export const createTaskStore = () => {
       input,
       status: 'queued',
       statusReason: null,
-      approver,
       branch: `task/${id.slice(0, 8)}`,
+      baseSha: null,
       phase: null,
       iterations: [],
       context: { files: [], decisions: [] },
@@ -53,7 +46,7 @@ export const createTaskStore = () => {
       refusals: [],
       blocked: [],
       previewUrl: null,
-      decidedBy: null,
+      pr: null,
       diff: null,
       events: [],
       listeners: new Set(),
@@ -92,8 +85,11 @@ export const createTaskStore = () => {
       case 'preview':
         t.previewUrl = e.url;
         break;
-      case 'approval':
-        t.decidedBy = e.by;
+      case 'base':
+        t.baseSha = e.sha;
+        break;
+      case 'pr':
+        t.pr = { url: e.url, number: e.number, draft: e.draft };
         break;
     }
   };
@@ -136,7 +132,6 @@ export const createTaskStore = () => {
     },
     // Newest first.
     list: () => [...tasks.values()].reverse().map(toSnapshot),
-    input: (id: string) => tasks.get(id)?.input ?? null,
     setDiff: (id: string, diff: string) => {
       const t = tasks.get(id);
       if (t) t.diff = diff;

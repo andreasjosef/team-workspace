@@ -18,7 +18,7 @@ import {
   type Edit,
   type Inference,
 } from '@app/agent';
-import { fail, ok, type Result } from '@app/shared';
+import { fail, ok, type Result, type TaskEvent } from '@app/shared';
 import {
   CONTAINER_WORKDIR,
   scanInstallScripts,
@@ -30,7 +30,7 @@ import {
 } from '@app/sandbox';
 import { lstat, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { reloadHub, type Hub } from '../hub/load.ts';
+import type { Hub } from '../hub/load.ts';
 import {
   createScratch,
   findEntry,
@@ -39,9 +39,11 @@ import {
   readLockfile,
   removeScratch,
 } from './depsCache.ts';
+import type { HubSync } from './hubSync.ts';
+import { buildPrBody } from './prBody.ts';
+import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 import {
-  applyToHub,
   branchFromHub,
   checkPatch,
   createWorkspace,
@@ -51,16 +53,19 @@ import {
   type Workspace,
 } from './workspace.ts';
 
-// The real task: context → baseline → fix → (preview) → proposed. Untrusted
-// code only ever runs through runInSandbox; this file runs on the host and
-// holds the secrets (the inference key lives inside `inference`).
+// The real task: sync → context → baseline → fix → (preview) → publish, which
+// opens a pull request. Untrusted code only ever runs through runInSandbox;
+// this file runs on the host and holds the secrets (the inference key lives
+// inside `inference`, a GitHub token inside `publisher`).
 //
 // Written against the same building blocks as the upgrade agent's pipeline,
 // which ran end to end; this one hasn't yet. See README "What's left".
 
 // Every side effect that leaves the host process is a dep: the hub's start-up
-// wiring passes `runInSandbox`, `fetchDenied` and the live inference; the
-// pipeline test passes fakes (pipeline.test.ts).
+// wiring passes `runInSandbox`, `fetchDenied`, the live inference, the sync
+// and the publisher; the pipeline test passes fakes, a local publisher and
+// a hub repo with a local bare repo as its origin
+// (pipeline.test.ts).
 export type SandboxRunner = typeof runInSandbox;
 export type DeniedLogFetch = typeof fetchDenied;
 
@@ -75,6 +80,14 @@ export type PipelineDeps = {
   depsCacheDir: string;
   egressAdminUrl: string;
   keepWorkspaces: boolean;
+  // Brings the hub repo to origin's main and clones it, before each task.
+  // One per hub: its lock spans every task (hubSync.ts).
+  sync: HubSync;
+  // Opens a green task's pull request.
+  publisher: Publisher;
+  // The task's page in the hub, linked from the pull request for what its
+  // body leaves out.
+  receiptUrl?: (taskId: string) => string;
 };
 
 const MAX_REFUSALS = 3;
@@ -91,42 +104,18 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
       if (!deps.keepWorkspaces) await removeWorkspace(ws);
     }
   },
-
-  // The patch was made from paths the policy allowed; check it again anyway
-  // (the role file or the patch could have changed since), then commit.
-  deploy: async ({ input, policy, emit }, diff) => {
-    emit({ type: 'phase', phase: 'deploy' });
-    const problem = checkPatch(policy, diff);
-    if (problem) {
-      emit({
-        type: 'status',
-        status: 'error',
-        reason: `Patch refused at deploy: ${problem}`,
-      });
-      return;
-    }
-    const failed = await applyToHub(
-      deps.hub.repoDir,
-      diff,
-      `${input.title}\n\nTask from ${policy.label}, approved in the hub.`
-    );
-    if (failed) {
-      emit({ type: 'status', status: 'error', reason: failed });
-      return;
-    }
-    await reloadHub(deps.hub);
-    emit({ type: 'log', message: 'Committed to main' });
-    // TODO(deploy track): push to GitHub and restart the prod container.
-    emit({
-      type: 'status',
-      status: 'deployed',
-      reason: 'Committed to main on the hub',
-    });
-  },
 });
 
 const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
-  const { id, input, policy, emit, setDiff } = task;
+  const { id, input, setDiff } = task;
+  // Kept for the receipt (the pull request's body), which is built from
+  // the stream, as the snapshot is.
+  const events: TaskEvent[] = [];
+  const emit = (event: TaskEvent) => {
+    events.push(event);
+    task.emit(event);
+  };
+  const reasoning: string[] = [];
   const text = `${input.title}\n${input.text}`;
 
   const run = async (
@@ -154,9 +143,27 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   emit({ type: 'status', status: 'working' });
 
-  // Context: a fresh copy of main, then what the agent gets to see.
+  // Context: the hub repo brought to origin's main and cloned (one lock over
+  // both), then what the agent gets to see. The pull request's branch is cut
+  // at the commit synced here, whatever main does meanwhile.
   emit({ type: 'phase', phase: 'context' });
-  await branchFromHub(ws, deps.hub.repoDir);
+  const { baseSha } = await deps.sync.sync({
+    log: (message) => emit({ type: 'log', message }),
+    clone: () => branchFromHub(ws, deps.hub.repoDir),
+  });
+  emit({ type: 'base', sha: baseSha });
+  // The role as the synced main defines it: a policy or prompt a developer
+  // merged since the task was queued applies to it.
+  const role = deps.hub.roles.get(input.role);
+  if (!role) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `The synced main has no ${input.role} role`,
+    });
+    return;
+  }
+  const { policy } = role;
   const signals = scanTaskInput(input.text);
   if (signals.length) emit({ type: 'input_flagged', signals });
   const sources: { path: string; content: string }[] = [];
@@ -363,7 +370,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       const reply = await deps.inference.complete(
         buildTaskMessages({
           policy,
-          rolePrompt: task.rolePrompt,
+          rolePrompt: role.prompt,
           task: input,
           decisions,
           files,
@@ -373,7 +380,11 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           ...(reproduction ? { reproduction } : {}),
         })
       );
-      return reply.success ? parseEditsResponse(reply.value) : reply;
+      if (!reply.success) return reply;
+      const answer = parseEditsResponse(reply.value);
+      if (answer.success && answer.value.reasoning)
+        reasoning.push(answer.value.reasoning);
+      return answer;
     },
     // The loop runs this on every answer, before a bug's step rule; apply
     // runs it again before writing. An answer that passed once passes again,
@@ -401,9 +412,10 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     onNote: (message) => emit({ type: 'log', message }),
   });
 
-  setDiff(await diffPaths(ws, [...touched]));
-  // A flagged report always ends flagged: green checks never make it
-  // proposed (a model that refused the report's instructions still produced
+  const diff = await diffPaths(ws, [...touched]);
+  setDiff(diff);
+  // A flagged report always ends flagged: green checks never publish it
+  // (a model that refused the report's instructions still produced
   // a change nobody asked for in good faith), and a loop that gave up ends
   // flagged too, keeping its own reason so the receipt shows why it stopped.
   // Decided on host facts only (the scanner's signals and the loop's
@@ -416,7 +428,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       status: 'flagged',
       reason:
         outcome.status === 'green'
-          ? `${carriedInstructions}, so the change was not proposed`
+          ? `${carriedInstructions}, so no pull request was opened`
           : `${carriedInstructions}; ${outcome.reason}`,
     });
     return;
@@ -429,12 +441,71 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
-  // TODO(sandbox track): start a preview container from this worktree and
-  // emit { type: 'preview', url }. See docs/architecture.md, "Previews".
+  const receipt = buildPrBody({
+    input,
+    branch: task.branch,
+    baseSha,
+    events,
+    files: [...touched].sort(),
+    reasoning,
+    receiptUrl: deps.receiptUrl?.(id) ?? null,
+  });
+  await publish(
+    deps,
+    { ...task, policy, rolePrompt: role.prompt },
+    baseSha,
+    diff,
+    receipt
+  );
+};
+
+// Green: the checked patch goes out as a pull request. The patch was made
+// from paths the policy allowed; check it again anyway (a test run could
+// have swapped a file for a symlink since), then hand it to the publisher.
+// Nothing here touches the hub repo's main.
+const publish = async (
+  deps: PipelineDeps,
+  { input, policy, branch, emit }: TaskHandle,
+  baseSha: string,
+  diff: string,
+  // The receipt: the pull request's title and body (prBody.ts).
+  receipt: { title: string; body: string }
+) => {
+  emit({ type: 'phase', phase: 'publish' });
+  const problem = checkPatch(policy, diff);
+  if (problem) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `Patch refused at publish: ${problem}`,
+    });
+    return;
+  }
+  const published = await deps.publisher.publish({
+    branch,
+    baseSha,
+    patch: diff,
+    title: receipt.title,
+    body: receipt.body,
+    draft: false,
+    message: commitMessage(input),
+    // The report id is validated by CreateTaskInput.
+    labels: ['from-support', ...(input.incidentId ? [input.incidentId] : [])],
+    log: (message) => emit({ type: 'log', message }),
+  });
+  if (!published.success) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `Publishing failed: ${published.message}`,
+    });
+    return;
+  }
+  emit({ type: 'pr', ...published.value, draft: false });
   emit({
     type: 'status',
-    status: 'proposed',
-    reason: 'Checks pass in the sandbox',
+    status: 'pr_opened',
+    reason: `Pull request #${published.value.number} is open for a developer`,
   });
 };
 

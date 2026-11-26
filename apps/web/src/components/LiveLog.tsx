@@ -101,10 +101,11 @@ export const LiveLog = ({ taskId }: { taskId: string }) => {
                 ⚑ task text: {e.signals.join(', ')}
               </div>
             );
-          case 'approval':
+          case 'pr':
             return (
               <div key={seq} className="tone-gold">
-                {e.decision} by {e.by}
+                pull request #{e.number}
+                {e.draft ? ' (draft)' : ''} opened: {e.url}
               </div>
             );
           case 'preview':

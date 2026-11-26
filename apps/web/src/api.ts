@@ -9,7 +9,6 @@ import {
   RoleSummary,
   TaskSnapshot,
   type CreateTaskInput,
-  type DecideInput,
   type Result,
 } from '@app/shared';
 import { QueryClient } from '@tanstack/react-query';
@@ -60,10 +59,6 @@ export const api = {
   diff: (id: string) => call<string>(paths.diff(id), {}, null),
   createTask: (input: CreateTaskInput) =>
     call(paths.tasks, post(input), CreateTaskResponse),
-  approve: (id: string, input: DecideInput) =>
-    call(paths.approve(id), post(input), TaskSnapshot),
-  reject: (id: string, input: DecideInput) =>
-    call(paths.reject(id), post(input), TaskSnapshot),
 };
 
 // Where a Result becomes a throw, for TanStack Query.

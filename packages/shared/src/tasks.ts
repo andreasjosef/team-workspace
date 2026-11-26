@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ContextDoc, TaskStatus } from './events.ts';
+import { ContextDoc, PullRequest, TaskStatus } from './events.ts';
 import { Role, TaskKind } from './roles.ts';
 
 // A task is one request from one role: "discount codes fail at checkout",
@@ -18,14 +18,6 @@ export const CreateTaskInput = z.object({
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 
-export const DecideInput = z.object({
-  // The role pressing the button. No auth in the demo: the hub checks it
-  // against the task role's policy, nothing more.
-  role: Role,
-  reason: z.string().trim().max(500).optional(),
-});
-export type DecideInput = z.infer<typeof DecideInput>;
-
 export const IterationSummary = z.object({
   n: z.number(),
   typeErrors: z.number(),
@@ -40,9 +32,9 @@ export const TaskSnapshot = z.object({
   input: CreateTaskInput,
   status: TaskStatus,
   statusReason: z.string().nullable(),
-  // Who must approve, from the creating role's policy.
-  approver: Role.nullable(),
   branch: z.string(),
+  // The commit of main the task started from, once it has synced.
+  baseSha: z.string().nullable(),
   phase: z.string().nullable(),
   iterations: z.array(IterationSummary),
   context: z.object({
@@ -54,7 +46,9 @@ export const TaskSnapshot = z.object({
   blocked: z.array(z.string()),
   previewUrl: z.string().nullable(),
   hasDiff: z.boolean(),
-  decidedBy: Role.nullable(),
+  // The pull request, once the hub opened one. A developer merges it on
+  // GitHub; the hub never does.
+  pr: PullRequest.nullable(),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshot>;
 

@@ -4,8 +4,7 @@ import type { TaskHandle, TaskRunner } from './runner.ts';
 import type { TaskStore } from './store.ts';
 
 // Runs at most `maxConcurrent` tasks at once; the rest wait in order. Each
-// task costs LLM tokens and VM CPU, and the app is public. Deploys skip the
-// queue: they're short, and only ever follow an approval.
+// task costs LLM tokens and VM CPU, and the app is public.
 export const createTaskQueue = (opts: {
   hub: Hub;
   store: TaskStore;
@@ -19,12 +18,13 @@ export const createTaskQueue = (opts: {
   const maxWaiting = opts.maxWaiting ?? 10;
 
   const handle = (id: string): TaskHandle | null => {
-    const input = opts.store.input(id);
-    const role = input && opts.hub.roles.get(input.role);
-    if (!input || !role) return null;
+    const task = opts.store.snapshot(id);
+    const role = task && opts.hub.roles.get(task.input.role);
+    if (!task || !role) return null;
     return {
       id,
-      input,
+      branch: task.branch,
+      input: task.input,
       policy: role.policy,
       rolePrompt: role.prompt,
       emit: (e) => opts.store.emit(id, e),
@@ -33,8 +33,8 @@ export const createTaskQueue = (opts: {
   };
 
   // A fault in the runner: log the detail, show the user a short line.
-  const crashed = (id: string, what: string) => (err: unknown) => {
-    opts.log.error({ err, taskId: id }, `${what} crashed`);
+  const crashed = (id: string) => (err: unknown) => {
+    opts.log.error({ err, taskId: id }, 'task crashed');
     opts.store.emit(id, {
       type: 'status',
       status: 'error',
@@ -48,7 +48,7 @@ export const createTaskQueue = (opts: {
     running++;
     opts.runner
       .run(task)
-      .catch(crashed(id, 'task'))
+      .catch(crashed(id))
       .finally(() => {
         running--;
         const next = waiting.shift();
@@ -66,12 +66,6 @@ export const createTaskQueue = (opts: {
       if (waiting.length >= maxWaiting) return false;
       waiting.push(id);
       return true;
-    },
-    deploy: (id: string) => {
-      const task = handle(id);
-      const diff = opts.store.diff(id);
-      if (!task || diff === null) return;
-      void opts.runner.deploy(task, diff).catch(crashed(id, 'deploy'));
     },
   };
 };

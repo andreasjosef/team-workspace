@@ -466,6 +466,9 @@ table.iters th {
 .receipt-head h2 {
   margin: 0;
 }
+.receipt-pr {
+  font-weight: 600;
+}
 .tabs {
   display: flex;
   flex-wrap: wrap;

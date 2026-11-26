@@ -1,6 +1,6 @@
 import type { RolePolicy } from '@app/shared';
 import { describe, expect, it } from 'vitest';
-import { checkPatch, diffTargets } from './workspace.ts';
+import { checkPatch, diffTargets, gitDetail } from './workspace.ts';
 
 const cs: RolePolicy = {
   name: 'cs',
@@ -47,5 +47,28 @@ describe('checkPatch', () => {
       'src/a.ts',
       'src/auth/a.ts',
     ]);
+  });
+});
+
+describe('gitDetail', () => {
+  it('redacts credentials in URLs and keeps git output to one line', () => {
+    const out = [
+      'remote: Invalid username or token.',
+      "fatal: Authentication failed for 'https://x-access-token:ghp_secret123@github.com/demo/shop.git/'",
+      '\u001b[31merror\u001b[0m: also at http://bot@example.com/r.git',
+      '',
+    ].join('\n');
+    const detail = gitDetail(out);
+    expect(detail).not.toMatch(/ghp_secret123|x-access-token|bot@/);
+    expect(detail).toContain('https://***@github.com/demo/shop.git/');
+    expect(detail).toContain('http://***@example.com/r.git');
+    // eslint-disable-next-line no-control-regex
+    expect(detail).not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+
+  it('keeps the end of long output, where git puts the error', () => {
+    const detail = gitDetail(`${'x'.repeat(500)} fatal: the end`, 50);
+    expect(detail).toHaveLength(50);
+    expect(detail).toMatch(/^….*fatal: the end$/);
   });
 });

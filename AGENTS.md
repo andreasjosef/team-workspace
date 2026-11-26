@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A support rep forwards a customer's report; an agent reproduces and fixes it in a throwaway sandbox container, inside its role's scope, and the hub opens a pull request that only a developer can merge. Direction and build specs: `docs/ticket-to-pr/`. Use the vocabulary in `CONTEXT.md`. The code is still the first version (dev, PO and CS roles, in-hub approval, commits to the hub's `main`); the specs say what changes, and the rules below hold throughout. Read `docs/architecture.md` before touching `packages/sandbox`, `packages/agent/src/policy.ts`, `apps/egress-proxy` or `apps/hub/src/tasks/`.
+Team Workspace: a hackathon project (Vultr Agent Runtime Hackathon). A support rep forwards a customer's report; an agent reproduces and fixes it in a throwaway sandbox container, inside its role's scope, and the hub opens a pull request. Changes reach `main` only through a pull request a developer merges: the hub pushes only `task/<id>` branches. Direction and build specs: `docs/ticket-to-pr/`. Use the vocabulary in `CONTEXT.md`. The PO and dev roles are first-version leftovers that spec 5 removes. Read `docs/architecture.md` before touching `packages/sandbox`, `packages/agent/src/policy.ts`, `apps/egress-proxy` or `apps/hub/src/tasks/`.
 
 ## Rules
 

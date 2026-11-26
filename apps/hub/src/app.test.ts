@@ -50,16 +50,12 @@ const settle = async (app: App, id: string, until: TaskStatus[]) => {
   return snap!;
 };
 
-const decide = (
-  app: App,
-  id: string,
-  action: 'approve' | 'reject',
-  role: string
-) =>
+// In-hub approval is gone: a developer merges the pull request on GitHub.
+const decide = (app: App, id: string, action: 'approve' | 'reject') =>
   app.inject({
     method: 'POST',
     url: `/api/tasks/${id}/${action}`,
-    payload: { role },
+    payload: { role: 'dev' },
   });
 
 describe('workspace', () => {
@@ -84,15 +80,20 @@ describe('workspace', () => {
 });
 
 describe('tasks', () => {
-  it('CS bug: context, reproduce, fix, proposed; the dev approves and it deploys', async () => {
+  it('CS bug: context, reproduce, fix, and a pull request for a developer', async () => {
     const app = await setup();
     const res = await create(app, discountTicket);
     expect(res.statusCode).toBe(201);
     const { taskId } = res.json();
 
-    const proposed = await settle(app, taskId, ['proposed']);
+    const proposed = await settle(app, taskId, ['pr_opened']);
     expect(proposed).toMatchObject({
-      approver: 'dev',
+      baseSha: expect.stringMatching(/^[0-9a-f]{40}$/),
+      pr: {
+        url: expect.stringMatching(/^https:\/\/.+\/pull\/\d+$/),
+        number: expect.any(Number),
+        draft: false,
+      },
       inputSignals: [],
       refusals: [],
       hasDiff: true,
@@ -113,15 +114,12 @@ describe('tasks', () => {
     });
     expect(diff.body).toContain('toUpperCase()');
 
-    // CS can't approve its own fix; the dev can.
-    expect((await decide(app, taskId, 'approve', 'cs')).statusCode).toBe(403);
-    expect((await decide(app, taskId, 'approve', 'dev')).statusCode).toBe(200);
-    const deployed = await settle(app, taskId, ['deployed']);
-    expect(deployed.decidedBy).toBe('dev');
-    expect((await decide(app, taskId, 'approve', 'dev')).statusCode).toBe(409);
+    // No route in the hub approves, rejects or merges anything.
+    expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
+    expect((await decide(app, taskId, 'reject')).statusCode).toBe(404);
   });
 
-  it('PO change: the linked decision comes along, the preview is up, the dev approves', async () => {
+  it('PO change: the linked decision comes along, the preview is up, a pull request opens', async () => {
     const app = await setup();
     const { taskId } = (
       await create(app, {
@@ -131,13 +129,11 @@ describe('tasks', () => {
         text: 'Change the signup button text to Start free.',
       })
     ).json();
-    const proposed = await settle(app, taskId, ['proposed']);
-    expect(proposed.context.files).toEqual(['src/web/signup.ts']);
-    expect(proposed.context.decisions.map((d) => d.id)).toEqual(['D-017']);
-    expect(proposed.previewUrl).not.toBeNull();
-    expect((await decide(app, taskId, 'approve', 'po')).statusCode).toBe(403);
-    expect((await decide(app, taskId, 'approve', 'dev')).statusCode).toBe(200);
-    await settle(app, taskId, ['deployed']);
+    const opened = await settle(app, taskId, ['pr_opened']);
+    expect(opened.context.files).toEqual(['src/web/signup.ts']);
+    expect(opened.context.decisions.map((d) => d.id)).toEqual(['D-017']);
+    expect(opened.previewUrl).not.toBeNull();
+    expect(opened.pr).not.toBeNull();
   });
 
   it('hostile ticket: flagged input, two policy refusals, a blocked network call', async () => {
@@ -160,9 +156,10 @@ describe('tasks', () => {
     expect(flagged.blocked[0]).toMatch(
       /^network: connect ENETUNREACH collector\.attacker\.example/
     );
-    // A flagged task can't be approved, only rejected.
-    expect((await decide(app, taskId, 'approve', 'dev')).statusCode).toBe(409);
-    expect((await decide(app, taskId, 'reject', 'dev')).statusCode).toBe(200);
+    // Nothing published, and nothing in the hub to approve or reject it.
+    expect(flagged.pr).toBeNull();
+    expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
+    expect((await decide(app, taskId, 'reject')).statusCode).toBe(404);
   });
 
   it("PO asking for the checkout fix: the PO's scope refuses every edit", async () => {
@@ -200,7 +197,7 @@ describe('tasks', () => {
   it('replays the stream to a late client', async () => {
     const app = await setup();
     const { taskId } = (await create(app, discountTicket)).json();
-    await settle(app, taskId, ['proposed']);
+    await settle(app, taskId, ['pr_opened']);
     await app.ready();
     const events: string[] = [];
     await new Promise<void>((done, reject) => {
@@ -217,7 +214,7 @@ describe('tasks', () => {
                 events.push(
                   e.type === 'status' ? `status:${e.status}` : e.type
                 );
-                if (e.type === 'status' && e.status === 'proposed') {
+                if (e.type === 'status' && e.status === 'pr_opened') {
                   ws.terminate();
                   done();
                 }
@@ -228,6 +225,8 @@ describe('tasks', () => {
     });
     expect(events[0]).toBe('status:working');
     expect(events).toContain('context');
+    // The pull request comes before the status that says it's open.
+    expect(events.slice(-2)).toEqual(['pr', 'status:pr_opened']);
   });
 
   it('reports a crashed runner as an error', async () => {
@@ -235,7 +234,6 @@ describe('tasks', () => {
       run: async () => {
         throw new Error('docker gone');
       },
-      deploy: async () => {},
     });
     const { taskId } = (await create(app, discountTicket)).json();
     expect((await settle(app, taskId, ['error'])).statusReason).toBe(

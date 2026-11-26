@@ -1,6 +1,6 @@
 // A heuristic for task text, which may be a customer's words pasted in
 // verbatim. It flags, it doesn't block: real protection is the role scope,
-// the sandbox and the human approval. A flag puts a warning on the task and
+// the sandbox and the developer's review. A flag puts a warning on the task and
 // in the dev's queue, and it's the cue for the demo's containment moment.
 
 const SIGNALS: [RegExp, string][] = [

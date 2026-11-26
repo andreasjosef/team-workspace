@@ -3,7 +3,7 @@
 #   sudo /opt/team-workspace/deploy/update.sh [branch]
 # The optional branch switches the checkout first. Idempotent: a second run
 # changes nothing and still ends with a healthy hub. Never touches .env, the
-# demo repo or the deps cache.
+# hub repo or the deps cache.
 set -euo pipefail
 
 APP=/opt/team-workspace

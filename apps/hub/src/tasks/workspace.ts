@@ -1,8 +1,9 @@
-import type { RolePolicy } from '@app/shared';
 import { refusalFor } from '@app/agent';
+import { fail, ok, type Result, type RolePolicy } from '@app/shared';
 import { spawn } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // A task's files on the host: <tasksDir>/<id>/repo is what sandboxes see
 // (mounted at /work); <tasksDir>/<id>/git is the git directory, which no
@@ -30,9 +31,17 @@ const SAFE_GIT = [
 // `cwd` matters: with --work-tree, `git apply` and pathspecs resolve against
 // the current directory, and from the wrong one a patch lands in the hub's own
 // source tree. Every call that touches a work tree runs inside it.
+//
+// `env` adds variables for this one call only (the push's token); the rest
+// of the environment is built from scratch, never `process.env`.
 export const git = (
   args: string[],
-  opts: { input?: string; extra?: string[]; cwd?: string } = {}
+  opts: {
+    input?: string;
+    extra?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+  } = {}
 ) =>
   new Promise<{ code: number; out: string }>((resolve) => {
     const child = spawn('git', [...SAFE_GIT, ...(opts.extra ?? []), ...args], {
@@ -46,6 +55,7 @@ export const git = (
         GIT_AUTHOR_EMAIL: 'hub@localhost',
         GIT_COMMITTER_NAME: 'Team hub',
         GIT_COMMITTER_EMAIL: 'hub@localhost',
+        ...opts.env,
       },
       timeout: 60_000,
     });
@@ -161,32 +171,164 @@ export const checkPatch = (
   return null;
 };
 
-// Approved: apply the patch to the hub's checkout of main and commit it. git
-// apply itself refuses paths outside the repo and writes through symlinks.
-export const applyToHub = async (
+// Every host-side git call on the hub repo names its git dir this way.
+export const inHub = (hubRepoDir: string) => [
+  `--git-dir=${join(hubRepoDir, '.git')}`,
+];
+
+// One plain line: control characters and line breaks become spaces (so the
+// text can't add a commit trailer or a fake log line), capped at `max`.
+export const oneLine = (text: string, max = Infinity) => {
+  const line = text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};
+
+// `scheme://user:secret@host` -> `scheme://***@host`.
+const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi;
+
+// Git's output as it may appear in a task reason or log: credentials in URLs
+// redacted, one line, its last `max` characters (git ends with the error).
+export const gitDetail = (out: string, max = 300) => {
+  const line = oneLine(out.replace(URL_CREDENTIALS, '$1***@'));
+  return line.length > max ? `…${line.slice(-(max - 1))}` : line;
+};
+
+// The commit the hub repo's checkout is at: the base a task starts from.
+export const hubHead = async (hubRepoDir: string) => {
+  const r = await git([...inHub(hubRepoDir), 'rev-parse', '--verify', 'HEAD']);
+  if (r.code !== 0)
+    throw new Error(`git rev-parse failed: ${r.out.slice(-500)}`);
+  return r.out.trim();
+};
+
+// Publishes a checked patch as a commit on a new branch at `baseSha`, never
+// on main. A fresh worktree of the hub repo under `scratchDir` (the host's
+// tasks dir, never under a sandbox mount) takes the patch, so nothing from
+// the task workspace comes along but the patch itself. git apply refuses
+// paths outside the repo and writes through symlinks. Any failure removes
+// the worktree and the branch again.
+export const publishBranch = async (
   hubRepoDir: string,
-  patch: string,
-  message: string
+  scratchDir: string,
+  input: { baseSha: string; branch: string; patch: string; message: string }
+): Promise<Result<null>> => {
+  await mkdir(scratchDir, { recursive: true });
+  const dir = await mkdtemp(join(scratchDir, 'publish-'));
+  const added = await git(
+    [
+      ...inHub(hubRepoDir),
+      'worktree',
+      'add',
+      '--quiet',
+      '-b',
+      input.branch,
+      '--',
+      dir,
+      input.baseSha,
+    ],
+    { cwd: hubRepoDir }
+  );
+  if (added.code !== 0) {
+    await rm(dir, { recursive: true, force: true });
+    return fail(
+      'conflict',
+      `git worktree add failed: ${added.out.slice(-300)}`
+    );
+  }
+  try {
+    // The worktree's own git dir, from the pointer git just wrote.
+    const pointer = await readFile(join(dir, '.git'), 'utf8');
+    const gitDir = /^gitdir: (.+)$/m.exec(pointer)?.[1];
+    if (!gitDir) throw new Error(`unexpected worktree pointer in ${dir}`);
+    const inTree = [`--git-dir=${gitDir}`, `--work-tree=${dir}`];
+    const applied = await git(
+      [...inTree, 'apply', '--index', '--whitespace=nowarn', '-'],
+      { input: input.patch, cwd: dir }
+    );
+    if (applied.code !== 0)
+      return await unpublish(
+        hubRepoDir,
+        dir,
+        input.branch,
+        `git apply failed: ${applied.out.slice(-300)}`
+      );
+    const committed = await git(
+      [...inTree, 'commit', '--quiet', '--no-verify', '-m', input.message],
+      { cwd: dir }
+    );
+    if (committed.code !== 0)
+      return await unpublish(
+        hubRepoDir,
+        dir,
+        input.branch,
+        `git commit failed: ${committed.out.slice(-300)}`
+      );
+    await removeWorktree(hubRepoDir, dir);
+    return ok(null);
+  } catch (err) {
+    await unpublish(hubRepoDir, dir, input.branch, '');
+    throw err;
+  }
+};
+
+const ASKPASS = fileURLToPath(new URL('./git-askpass.sh', import.meta.url));
+
+// Pushes a published branch to the hub repo's origin (GitHub). The token
+// reaches only this git process: GIT_ASKPASS is a script in this repo that
+// prints HUB_PUSH_TOKEN when git asks for a password. No credential helper
+// runs (one could store the token), and no system config is read. The
+// origin URL comes from the hub's own config, which the operator writes, so
+// this call allows the file protocol (a local bare repo in tests).
+export const pushBranch = async (
+  hubRepoDir: string,
+  branch: string,
+  token: string
+): Promise<Result<null>> => {
+  const pushed = await git(
+    [
+      ...inHub(hubRepoDir),
+      'push',
+      '--quiet',
+      '--no-verify',
+      'origin',
+      `refs/heads/${branch}:refs/heads/${branch}`,
+    ],
+    {
+      cwd: hubRepoDir,
+      extra: ['-c', 'protocol.file.allow=always', '-c', 'credential.helper='],
+      env: {
+        GIT_ASKPASS: ASKPASS,
+        HUB_PUSH_TOKEN: token,
+        GIT_CONFIG_NOSYSTEM: '1',
+      },
+    }
+  );
+  if (pushed.code !== 0)
+    return fail('unavailable', `git push failed: ${gitDetail(pushed.out)}`);
+  return ok(null);
+};
+
+const removeWorktree = async (hubRepoDir: string, dir: string) => {
+  await git([...inHub(hubRepoDir), 'worktree', 'remove', '--force', dir], {
+    cwd: hubRepoDir,
+  });
+  await rm(dir, { recursive: true, force: true });
+  await git([...inHub(hubRepoDir), 'worktree', 'prune'], { cwd: hubRepoDir });
+};
+
+const unpublish = async (
+  hubRepoDir: string,
+  dir: string,
+  branch: string,
+  reason: string
 ) => {
-  const inHub = [
-    `--git-dir=${join(hubRepoDir, '.git')}`,
-    `--work-tree=${hubRepoDir}`,
-  ];
-  const applied = await git(
-    [...inHub, 'apply', '--index', '--whitespace=nowarn', '-'],
-    {
-      input: patch,
-      cwd: hubRepoDir,
-    }
-  );
-  if (applied.code !== 0) return `git apply failed: ${applied.out.slice(-300)}`;
-  const committed = await git(
-    [...inHub, 'commit', '--no-verify', '-m', message],
-    {
-      cwd: hubRepoDir,
-    }
-  );
-  if (committed.code !== 0)
-    return `git commit failed: ${committed.out.slice(-300)}`;
-  return null;
+  await removeWorktree(hubRepoDir, dir);
+  await git([...inHub(hubRepoDir), 'branch', '-D', '--', branch], {
+    cwd: hubRepoDir,
+  });
+  return fail('invalid', reason);
 };

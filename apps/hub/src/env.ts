@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+// `NAME=` in an env file means unset, not an empty value.
+const unsetIfEmpty = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
+
+export type GitHubRepo = { owner: string; name: string };
+
 const EnvSchema = z
   .object({
     NODE_ENV: z
@@ -26,12 +32,44 @@ const EnvSchema = z
     MAX_CONCURRENT_TASKS: z.coerce.number().int().min(1).default(2),
     // Keep task workspaces after the run, for debugging only.
     KEEP_WORKSPACES: z.stringbool().default(false),
+    // The GitHub repo the hub repo is a clone of, as `owner/name`. Set, a
+    // green task is pushed there and opened as a pull request; unset, it
+    // stays a branch in the hub repo (the local publisher).
+    GITHUB_REPO: unsetIfEmpty(
+      z
+        .string()
+        .regex(
+          /^[A-Za-z0-9-]+\/(?!\.\.?$)[A-Za-z0-9._-]+$/,
+          'GITHUB_REPO must be owner/name'
+        )
+        // Parsed once here: the regex allows exactly one `/`.
+        .transform((repo): GitHubRepo => {
+          const slash = repo.indexOf('/');
+          return { owner: repo.slice(0, slash), name: repo.slice(slash + 1) };
+        })
+    ),
+    // Fine-grained, for that one repo: contents and pull requests.
+    GITHUB_TOKEN: unsetIfEmpty(z.string()),
+    GITHUB_API_URL: z.url().default('https://api.github.com'),
   })
   .refine(
     (e) =>
       e.RUNNER === 'mock' || (e.VULTR_INFERENCE_API_KEY && e.INFERENCE_MODEL),
     'RUNNER=real needs VULTR_INFERENCE_API_KEY and INFERENCE_MODEL'
-  );
+  )
+  .refine(
+    (e) => e.RUNNER === 'mock' || !e.GITHUB_REPO || e.GITHUB_TOKEN,
+    'GITHUB_REPO with RUNNER=real needs GITHUB_TOKEN'
+  )
+  // Repo and token together, so a caller narrows once instead of asserting
+  // the token: set when both are (always, with GITHUB_REPO and RUNNER=real).
+  .transform((e) => ({
+    ...e,
+    github:
+      e.GITHUB_REPO && e.GITHUB_TOKEN
+        ? { repo: e.GITHUB_REPO, token: e.GITHUB_TOKEN }
+        : undefined,
+  }));
 
 export type Env = z.infer<typeof EnvSchema>;
 

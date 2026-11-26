@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 // The product repo as the hub sees it: role policies and prompts from
 // `.hub/`, decisions and docs, and the source files the mock runner ranks.
-// This is the hub's own checkout of `main`, which changes only through
-// approved patches, so it's trusted. Reads still never follow symlinks.
+// This is the hub's own checkout of `main`, which changes only by fetching
+// what developers merged on GitHub (tasks/hubSync.ts), so it's trusted. Reads still never follow symlinks.
 
 export type RoleEntry = { policy: RolePolicy; prompt: string };
 
@@ -101,10 +101,12 @@ export const loadHub = async (
   sourceFiles: await loadSources(repoDir),
 });
 
-// After a deploy: decisions and sources may have changed. Role policies are
-// re-read too, but no agent can have changed them (see refusalFor).
+// After a sync to origin's main: roles, prompts, decisions and sources follow
+// what developers merged (no agent can change `.hub/`, see refusalFor). All
+// or nothing: if any part fails to load, it throws and the hub is unchanged.
 export const reloadHub = async (hub: Hub) => {
-  hub.roles = await loadRoles(hub.repoDir);
-  hub.docs = await loadDocs(hub.repoDir);
-  hub.sourceFiles = await loadSources(hub.repoDir);
+  const roles = await loadRoles(hub.repoDir);
+  const docs = await loadDocs(hub.repoDir);
+  const sourceFiles = await loadSources(hub.repoDir);
+  Object.assign(hub, { roles, docs, sourceFiles });
 };

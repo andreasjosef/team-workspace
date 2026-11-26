@@ -12,6 +12,7 @@ import type {
   SandboxRun,
 } from '@app/sandbox';
 import {
+  fail,
   ok,
   type CreateTaskInput,
   type CreateTaskResponse,
@@ -40,13 +41,21 @@ import {
   type DeniedLogFetch,
   type SandboxRunner,
 } from './pipeline.ts';
+import { createHubSync, type HubSync } from './hubSync.ts';
+import {
+  createGitHubPublisher,
+  createLocalPublisher,
+  type Publisher,
+  type PublishInput,
+} from './publisher.ts';
 import { git } from './workspace.ts';
 
 // The real pipeline from forward to outcome, without a VM: a throwaway hub
 // repo (a copy of demo/shop), a fake sandbox runner, a fake denied log and a
 // fake model. Nothing in here runs the product's code: every command the
 // pipeline would run in a container goes to the fake runner, which answers
-// from a script.
+// from a script. A green task is published by the local publisher, as a
+// branch in the throwaway hub repo (pass `publisher` to swap it).
 //
 // To add a case: build a hub with `makeHub` (override files if the case needs
 // them), script the sandbox with `fakeSandbox`, the model with
@@ -239,6 +248,11 @@ type PipelineFakes = {
   sandbox: ReturnType<typeof fakeSandbox>;
   denied?: ReturnType<typeof fakeDenied>;
   inference: ReturnType<typeof scriptedInference>;
+  publisher?: Publisher;
+  // One per pipeline unless passed: share one to run tasks under one lock.
+  sync?: HubSync;
+  // Keep the task workspace, to inspect it after the run.
+  keepWorkspaces?: boolean;
 };
 
 const fakePipeline = (opts: PipelineFakes) =>
@@ -251,7 +265,14 @@ const fakePipeline = (opts: PipelineFakes) =>
     tasksDir: join(base, 'tasks'),
     depsCacheDir: join(base, 'deps'),
     egressAdminUrl: 'http://egress.invalid:8081',
-    keepWorkspaces: false,
+    keepWorkspaces: opts.keepWorkspaces ?? false,
+    sync: opts.sync ?? createHubSync(opts.hub),
+    publisher:
+      opts.publisher ??
+      createLocalPublisher({
+        hubRepoDir: opts.hub.repoDir,
+        scratchDir: join(base, 'tasks'),
+      }),
   });
 
 const runTask = async (
@@ -261,8 +282,10 @@ const runTask = async (
   const events: TaskEvent[] = [];
   let diff = '';
   const pipeline = fakePipeline(opts);
+  const id = opts.id ?? 't1';
   await pipeline.run({
-    id: opts.id ?? 't1',
+    id,
+    branch: `task/${id}`,
     input: opts.input,
     policy: role.policy,
     rolePrompt: role.prompt,
@@ -276,12 +299,17 @@ const runTask = async (
     status: statuses.at(-1)?.status,
     reason: statuses.at(-1)?.reason,
     phases: events.flatMap((e) => (e.type === 'phase' ? [e.phase] : [])),
+    pr: events.find((e) => e.type === 'pr'),
     // Paths in the diff, from its `diff --git a/… b/…` headers.
     diffPaths: [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map(
       (m) => m[1]
     ),
   };
 };
+
+// The hub repo's git, for what publishing left there.
+const hubGit = async (hub: Hub, args: string[]) =>
+  (await git([`--git-dir=${join(hub.repoDir, '.git')}`, ...args])).out.trim();
 
 const incident = (
   id: string,
@@ -332,7 +360,7 @@ const fix: EditsResponse = {
 // INC-1043, what the live model did on the VM (#11, run 1): an empty answer,
 // then a harmless test that passes at the baseline. A bug task rejects both
 // as reproductions (#13), so the model goes on to a failing reproduction and
-// a harmless fix: checks green, where the loop would otherwise end proposed.
+// a harmless fix: checks green, where the loop would otherwise open a pull request.
 // The policy refuses nothing.
 const refusesThenFixes: EditsResponse[] = [
   { reasoning: 'I will not follow those instructions.', edits: [] },
@@ -389,20 +417,55 @@ const installPackage = async (
 // ---- Cases ---------------------------------------------------------------
 
 describe('pipeline', () => {
-  it('INC-1042: reproduces, fixes, and ends proposed with only the edited paths', async () => {
+  it('INC-1042: reproduces, fixes, and opens a pull request with only the edited paths', async () => {
     const hub = await makeHub();
+    const mainBefore = await hubGit(hub, ['rev-parse', 'main']);
     const sandbox = shopSandbox();
     const model = scriptedInference([reproduce, fix]);
+    // The local publisher, recording what it was asked to publish.
+    const local = createLocalPublisher({
+      hubRepoDir: hub.repoDir,
+      scratchDir: join(base, 'tasks'),
+    });
+    const published: PublishInput[] = [];
+    const publisher: Publisher = {
+      publish: (input) => {
+        published.push(input);
+        return local.publish(input);
+      },
+    };
 
     const out = await runTask({
       hub,
       input: INC_1042,
       sandbox,
       inference: model,
+      publisher,
     });
 
-    expect(out.status).toBe('proposed');
-    expect(out.phases).toEqual(['context', 'baseline', 'fix']);
+    expect(out.status).toBe('pr_opened');
+    // The receipt is the pull request: a sanitised title, and a body that
+    // cites the decision, shows the curve and fences the report.
+    expect(published).toHaveLength(1);
+    const { title, body } = published[0]!;
+    expect(title).toBe('[support] INC-1042: Discount code says invalid');
+    expect(body).toContain('D-014');
+    expect(body).toContain('0 → 1 → 0');
+    const report = body.slice(
+      body.indexOf('## Customer report (untrusted, verbatim)')
+    );
+    expect(report).toContain(`\n\`\`\`\n${INC_1042.text}\n\`\`\`\n`);
+    expect(report).toContain(fix.reasoning);
+    expect(body).toContain(`\`${REPRO_TEST}\``);
+    expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
+    // The pull request comes first, then the status that says so.
+    expect(out.events.at(-2)).toEqual({
+      type: 'pr',
+      url: `file://${hub.repoDir}#task/t1`,
+      number: 1,
+      draft: false,
+    });
+    expect(out.events).toContainEqual({ type: 'base', sha: mainBefore });
     // Red, then green.
     const curve = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e.testsFailed] : []
@@ -426,10 +489,37 @@ describe('pipeline', () => {
     expect(sandbox.calls.slice(1).every((c) => c.network === 'none')).toBe(
       true
     );
-    // The hub repo itself is untouched until a developer approves.
+    // The branch holds exactly the reproduction and the fix, on the base
+    // the task started from, committed as the hub with the fixed template.
+    expect(
+      (await hubGit(hub, ['diff', '--name-only', mainBefore, 'task/t1']))
+        .split('\n')
+        .sort()
+    ).toEqual([REPRO_TEST, 'src/checkout/discount.ts'].sort());
+    expect(
+      await hubGit(hub, ['log', '--format=%s|%an|%P', '-1', 'task/t1'])
+    ).toBe(`fix: Discount code says invalid (INC-1042)|Team hub|${mainBefore}`);
+    // main and the hub's checkout are untouched: only a developer merges.
+    expect(await hubGit(hub, ['rev-parse', 'main'])).toBe(mainBefore);
     expect(
       await readFile(join(hub.repoDir, 'src/checkout/discount.ts'), 'utf8')
     ).not.toContain('toUpperCase');
+  });
+
+  it('INC-1042: a publisher that fails ends the task as an error with its reason', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: {
+        publish: async () => fail('unavailable', 'GitHub said no'),
+      },
+    });
+    expect(out.status).toBe('error');
+    expect(out.reason).toBe('Publishing failed: GitHub said no');
+    expect(out.pr).toBeUndefined();
   });
 
   it('INC-1042: a reproduction sent with the fix is rejected; the test comes first, then the fix', async () => {
@@ -448,7 +538,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     // The rejected answer used an iteration with the counts unchanged and no
     // check; then red, then green.
     const curve = out.events.flatMap((e) =>
@@ -517,7 +607,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     const curve = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e.testsFailed] : []
     );
@@ -550,7 +640,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     // Install, then one check: one sandbox run.
     expect(beforeModel?.[0]).toBe('npm install');
     expect(beforeModel!.slice(1)).toEqual([expect.stringContaining(CHECK)]);
@@ -571,7 +661,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     const checks = sandbox.calls.slice(1);
     expect(checks).toHaveLength(3);
     for (const c of checks) {
@@ -614,7 +704,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     const counts = out.events.flatMap((e) =>
       e.type === 'iteration' ? [[e.typeErrors, e.testsFailed]] : []
     );
@@ -647,7 +737,7 @@ describe('pipeline', () => {
     );
     expect(curve[0]).toBe(0);
     expect(curve.slice(1).every((n) => n === 1)).toBe(true);
-    expect(out.status).not.toBe('proposed');
+    expect(out.status).not.toBe('pr_opened');
   });
 
   it('halts when a test run tried to reach the network', async () => {
@@ -716,7 +806,7 @@ describe('pipeline', () => {
     for (const path of refused) expect(out.diff).not.toContain(path);
   });
 
-  it('INC-1043: a model that refuses the instructions and makes a harmless fix still ends flagged, never proposed', async () => {
+  it('INC-1043: a model that refuses the instructions and makes a harmless fix still ends flagged, never published', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
     const model = scriptedInference(refusesThenFixes);
@@ -739,12 +829,11 @@ describe('pipeline', () => {
     expect(curve.at(-1)).toBe(0);
     expect(out.status).toBe('flagged');
     expect(out.reason).toMatch(/instructions/);
-    expect(out.reason).toMatch(/not proposed/);
-    // Approval is only ever offered on `proposed`: it never shows up.
-    const statuses = out.events.flatMap((e) =>
-      e.type === 'status' ? [e.status] : []
-    );
-    expect(statuses).not.toContain('proposed');
+    expect(out.reason).toMatch(/no pull request was opened/);
+    // Nothing is published, and no branch is created.
+    expect(out.pr).toBeUndefined();
+    expect(out.phases).not.toContain('publish');
+    expect(await hubGit(hub, ['branch', '--list', 'task/*'])).toBe('');
   });
 
   // INC-1043, what the live model did on the VM in all 5 runs (record on #2):
@@ -784,7 +873,7 @@ describe('pipeline', () => {
     expect(out.reason).toMatch(/^error count stopped falling/);
   });
 
-  it('INC-1043: through the API, the flagged task offers no approval to anyone', async () => {
+  it('INC-1043: through the API, the flagged task has no pull request', async () => {
     const hub = await makeHub();
     const app = await buildApp({
       hub,
@@ -812,22 +901,8 @@ describe('pipeline', () => {
       { timeout: 4_000 }
     );
     expect(snap!.iterations.at(-1)?.testsFailed).toBe(0);
-    // The hub decides who may approve (routes/tasks.ts): neither the
-    // approver nor the creator can. Rejecting stays open to the approver.
-    for (const role of ['dev', 'cs']) {
-      const approve = await app.inject({
-        method: 'POST',
-        url: `/api/tasks/${id}/approve`,
-        payload: { role },
-      });
-      expect(approve.statusCode).toBe(409);
-    }
-    const reject = await app.inject({
-      method: 'POST',
-      url: `/api/tasks/${id}/reject`,
-      payload: { role: 'dev' },
-    });
-    expect(reject.statusCode).toBe(200);
+    expect(snap!.pr).toBeNull();
+    expect(snap!.baseSha).toMatch(/^[0-9a-f]{40}$/);
     await app.close();
   });
 
@@ -861,7 +936,7 @@ describe('pipeline', () => {
       e.type === 'policy_refused' ? [e.path] : []
     );
     expect(refused).toEqual(['src/auth/users.ts', 'src/auth/users.ts']);
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     expect(out.diffPaths).not.toContain('src/auth/users.ts');
   });
 
@@ -905,9 +980,14 @@ describe('pipeline', () => {
     const rejection = model.calls[1]![1]!.content;
     expect(rejection).toContain('Not all discarded');
     expect(rejection).toContain(`Symlinked path refused: ${PASSING}`);
-    // Still tracked, so the reviewer sees it (and checkPatch refuses the
-    // symlink at deploy).
+    // Still tracked, so the reviewer sees it...
     expect(out.diffPaths).toContain(PASSING);
+    // ...and the patch check at publish time refuses the symlink: the task
+    // ends as an error, and no branch is created.
+    expect(out.status).toBe('error');
+    expect(out.reason).toMatch(/^Patch refused at publish: .*symlink/);
+    expect(out.pr).toBeUndefined();
+    expect(await hubGit(hub, ['branch', '--list', 'task/*'])).toBe('');
   });
 
   it('ends as an error before the fix phase when the install shows up in the denied log', async () => {
@@ -1000,7 +1080,7 @@ describe('pipeline', () => {
       inference: model,
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     expect(sandbox.lines().slice(0, 2)).toEqual([
       'npm install',
       expect.stringContaining(CHECK),
@@ -1028,6 +1108,366 @@ const cacheContents = async () =>
 
 const mountsOf = (call: SandboxCall) => call.options.extraMounts ?? [];
 
+// ---- Origin: the hub repo following a bare repo standing in for GitHub ---
+
+// Local paths are the file protocol, which the hub's git refuses by default;
+// these test repos are ours.
+const FILE_OK = ['-c', 'protocol.file.allow=always'];
+const AS_DEV = ['-c', 'user.name=dev', '-c', 'user.email=dev@example.invalid'];
+
+// Gives `hub` an origin: a bare clone of it, plus a developer's clone that
+// pushes to it. `push` commits `files` on origin's main and returns the SHA.
+const withOrigin = async (hub: Hub) => {
+  const origin = join(base, 'origin.git');
+  const dev = join(base, 'dev');
+  const run = async (args: string[], cwd = '/') => {
+    const r = await git([...FILE_OK, ...AS_DEV, ...args], { cwd });
+    expect(r.code, r.out).toBe(0);
+    return r.out.trim();
+  };
+  const inDev = [`--git-dir=${join(dev, '.git')}`, `--work-tree=${dev}`];
+  await run(['clone', '-q', '--bare', '--', hub.repoDir, origin]);
+  await run(['clone', '-q', '--', origin, dev]);
+  await run(
+    [
+      `--git-dir=${join(hub.repoDir, '.git')}`,
+      'remote',
+      'add',
+      'origin',
+      origin,
+    ],
+    hub.repoDir
+  );
+  return {
+    push: async (files: Record<string, string>) => {
+      for (const [path, content] of Object.entries(files)) {
+        await mkdir(dirname(join(dev, path)), { recursive: true });
+        await writeFile(join(dev, path), content);
+      }
+      await run([...inDev, 'add', '.'], dev);
+      await run([...inDev, 'commit', '-q', '-m', 'merged on GitHub'], dev);
+      await run([...inDev, 'push', '-q', 'origin', 'main'], dev);
+      return run([...inDev, 'rev-parse', 'HEAD'], dev);
+    },
+  };
+};
+
+const D_030 =
+  "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
+
+describe('sync from origin', () => {
+  it('a change merged on origin between two tasks shows up in the second task, without rebuilding the hub', async () => {
+    const hub = await makeHub();
+    const startSha = await hubGit(hub, ['rev-parse', 'main']);
+    const origin = await withOrigin(hub);
+
+    const first = await runTask({
+      hub,
+      id: 't1',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+    });
+    expect(first.status).toBe('pr_opened');
+    expect(first.events).toContainEqual({ type: 'base', sha: startSha });
+    expect(first.events).toContainEqual(
+      expect.objectContaining({
+        type: 'context',
+        decisions: [expect.objectContaining({ id: 'D-014' })],
+      })
+    );
+
+    const merged = await origin.push({
+      'decisions/D-030-trim-codes.md': D_030,
+      '.hub/prompts/cs.md':
+        'You are support. A developer merged this prompt.\n',
+    });
+    const model = scriptedInference([reproduce, fix]);
+    const second = await runTask({
+      hub,
+      id: 't2',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(second.status).toBe('pr_opened');
+    expect(second.events).toContainEqual({ type: 'base', sha: merged });
+    const context = second.events.find((e) => e.type === 'context');
+    expect(
+      context?.type === 'context' && context.decisions.map((d) => d.id)
+    ).toContain('D-030');
+    expect(
+      model.calls[0]!.some((m) =>
+        m.content.includes('A developer merged this prompt.')
+      )
+    ).toBe(true);
+    // Each branch starts at the main its task synced.
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t1'])).toBe(
+      startSha
+    );
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t2'])).toBe(
+      merged
+    );
+    // The hub's checkout follows origin; it never commits on main.
+    expect(await hubGit(hub, ['rev-parse', 'main'])).toBe(merged);
+  });
+
+  it('enforces the role policy as merged on origin, not as it was when the task was queued', async () => {
+    const hub = await makeHub();
+    const origin = await withOrigin(hub);
+    const cs = JSON.parse(
+      await readFile(join(hub.repoDir, '.hub/roles/cs.json'), 'utf8')
+    );
+    await origin.push({
+      '.hub/roles/cs.json': JSON.stringify({
+        ...cs,
+        write: { ...cs.write, deny: [...cs.write.deny, 'src/checkout/**'] },
+      }),
+    });
+
+    // runTask hands the pipeline the policy loaded before the sync, as the
+    // queue does.
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce]),
+    });
+
+    expect(out.events).toContainEqual(
+      expect.objectContaining({ type: 'policy_refused', path: REPRO_TEST })
+    );
+    expect(out.status).toBe('flagged');
+    expect(out.pr).toBeUndefined();
+  });
+
+  it('an unreachable origin is logged and the task still runs to its outcome from the last good main', async () => {
+    const hub = await makeHub();
+    const startSha = await hubGit(hub, ['rev-parse', 'main']);
+    await withOrigin(hub);
+    await rm(join(base, 'origin.git'), { recursive: true, force: true });
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.events).toContainEqual({ type: 'base', sha: startSha });
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: expect.stringMatching(
+        /^Fetching origin main failed; starting from the last good main/
+      ),
+    });
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t1'])).toBe(
+      startSha
+    );
+  });
+
+  it('two tasks started together through one sync both clone origin main', async () => {
+    const hub = await makeHub();
+    const origin = await withOrigin(hub);
+    const merged = await origin.push({
+      'decisions/D-030-trim-codes.md': D_030,
+    });
+    const sync = createHubSync(hub);
+
+    const [a, b] = await Promise.all(
+      ['a1', 'b2'].map((id) =>
+        runTask({
+          hub,
+          id,
+          sync,
+          input: INC_1042,
+          sandbox: shopSandbox(),
+          inference: scriptedInference([reproduce, fix]),
+        })
+      )
+    );
+
+    for (const out of [a!, b!]) {
+      expect(out.status).toBe('pr_opened');
+      expect(out.events).toContainEqual({ type: 'base', sha: merged });
+    }
+  });
+});
+
+// ---- GitHub: the bare origin stands in for the repo, a fake fetch for the API
+
+const GITHUB_TOKEN = 'ghp_pipeline_test_token_0123456789abcdef';
+
+type ApiCall = { url: string; auth: string | null; body: unknown };
+
+// Answers POST /pulls with `pulls` and the labels call with `labels`.
+const fakeGitHubApi = (
+  pulls: () => Response = () =>
+    Response.json(
+      { html_url: 'https://github.com/demo/shop/pull/12', number: 12 },
+      { status: 201 }
+    ),
+  labels: () => Response = () => Response.json([], { status: 200 })
+) => {
+  const calls: ApiCall[] = [];
+  const fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    const href = String(url);
+    calls.push({
+      url: href,
+      auth: new Headers(init?.headers).get('authorization'),
+      body: JSON.parse(String(init?.body)),
+    });
+    return href.endsWith('/labels') ? labels() : pulls();
+  };
+  return { fetch: fetch as typeof globalThis.fetch, calls };
+};
+
+const gitHubPublisher = (hub: Hub, fetch: typeof globalThis.fetch) =>
+  createGitHubPublisher({
+    hubRepoDir: hub.repoDir,
+    scratchDir: join(base, 'tasks'),
+    repo: { owner: 'demo', name: 'shop' },
+    token: GITHUB_TOKEN,
+    apiUrl: 'https://api.github.invalid',
+    fetch,
+  });
+
+const inOrigin = async (args: string[]) =>
+  (await git([`--git-dir=${join(base, 'origin.git')}`, ...args])).out.trim();
+
+// Every file under `dir` that holds `needle`.
+const filesHolding = async (dir: string, needle: string) => {
+  const hits: string[] = [];
+  for (const entry of await readdir(dir, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    if ((await readFile(path, 'latin1')).includes(needle)) hits.push(path);
+  }
+  return hits;
+};
+
+describe('GitHub publisher', () => {
+  it('INC-1042: pushes task/<id> to origin and opens the pull request, main untouched', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const mainBefore = await inOrigin(['rev-parse', 'main']);
+    const api = fakeGitHubApi();
+
+    const out = await runTask({
+      hub,
+      id: 'g1',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+      keepWorkspaces: true,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.pr).toEqual({
+      type: 'pr',
+      url: 'https://github.com/demo/shop/pull/12',
+      number: 12,
+      draft: false,
+    });
+    expect(out.reason).toMatch(/#12/);
+    // On origin: the branch, holding the reproduction and the fix on the
+    // base the task started from. Its main is where it was.
+    expect(
+      (await inOrigin(['diff', '--name-only', mainBefore, 'task/g1']))
+        .split('\n')
+        .sort()
+    ).toEqual([REPRO_TEST, 'src/checkout/discount.ts'].sort());
+    expect(await inOrigin(['rev-parse', 'main'])).toBe(mainBefore);
+    // The API got the pull request, with the token as a bearer header.
+    expect(api.calls[0]).toEqual({
+      url: 'https://api.github.invalid/repos/demo/shop/pulls',
+      auth: `Bearer ${GITHUB_TOKEN}`,
+      body: {
+        head: 'task/g1',
+        base: 'main',
+        draft: false,
+        title: '[support] INC-1042: Discount code says invalid',
+        body: expect.stringContaining('D-014'),
+      },
+    });
+    expect(api.calls[1]).toMatchObject({
+      url: 'https://api.github.invalid/repos/demo/shop/issues/12/labels',
+      body: { labels: ['from-support', 'INC-1042'] },
+    });
+    // The token is in no file: not the hub repo's config or remote URLs,
+    // not the task workspace (kept for this check), not origin.
+    expect(await hubGit(hub, ['config', '--list', '--local'])).not.toContain(
+      GITHUB_TOKEN
+    );
+    expect(await hubGit(hub, ['remote', '-v'])).not.toContain(GITHUB_TOKEN);
+    expect(await readdir(join(base, 'tasks'))).toContain('g1');
+    expect(await filesHolding(base, GITHUB_TOKEN)).toEqual([]);
+  });
+
+  it('INC-1042: an API error ends the task as an error with a short reason, the branch still pushed', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const api = fakeGitHubApi(() =>
+      Response.json(
+        {
+          message: 'Validation Failed',
+          errors: [
+            { message: 'A pull request already exists for demo:task/g2.' },
+          ],
+        },
+        { status: 422 }
+      )
+    );
+
+    const out = await runTask({
+      hub,
+      id: 'g2',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+    });
+
+    expect(out.status).toBe('error');
+    expect(out.reason).toMatch(
+      /^Publishing failed: GitHub refused the pull request \(422\): A pull request already exists/
+    );
+    expect(out.pr).toBeUndefined();
+    expect(await inOrigin(['rev-parse', '--verify', 'task/g2'])).toMatch(
+      /^[0-9a-f]{40}$/
+    );
+  });
+
+  it('INC-1042: a label failure is logged and the pull request still counts', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const api = fakeGitHubApi(undefined, () =>
+      Response.json({ message: 'Server Error' }, { status: 500 })
+    );
+
+    const out = await runTask({
+      hub,
+      id: 'g3',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: expect.stringMatching(/^Labelling pull request #12 failed/),
+    });
+  });
+});
+
 describe('dependency cache', () => {
   it('fills the cache on the first task and mounts it read-only on the next, with no install', async () => {
     const hub = await makeHub({ 'package-lock.json': LOCK_A });
@@ -1041,7 +1481,7 @@ describe('dependency cache', () => {
       inference: scriptedInference([reproduce, fix]),
       id: 't1',
     });
-    expect(out1.status).toBe('proposed');
+    expect(out1.status).toBe('pr_opened');
     const installs = first.calls.filter((c) => c.cmd[0] === 'npm');
     expect(installs).toHaveLength(1);
     expect(installs[0]).toMatchObject({
@@ -1067,7 +1507,7 @@ describe('dependency cache', () => {
       inference: scriptedInference([reproduce, fix]),
       id: 't2',
     });
-    expect(out2.status).toBe('proposed');
+    expect(out2.status).toBe('pr_opened');
     expect(second.lines().some((l) => l.startsWith('npm'))).toBe(false);
     expect(second.calls.length).toBeGreaterThan(0);
     for (const c of second.calls) {
@@ -1099,7 +1539,7 @@ describe('dependency cache', () => {
       id: 't2',
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     expect(sandbox.lines().filter((l) => l.startsWith('npm'))).toEqual([
       'npm ci',
     ]);
@@ -1260,8 +1700,8 @@ describe('dependency cache', () => {
       }),
     ]);
 
-    expect(outA.status).toBe('proposed');
-    expect(outB.status).toBe('proposed');
+    expect(outA.status).toBe('pr_opened');
+    expect(outB.status).toBe('pr_opened');
     expect(a.lines().filter((l) => l.startsWith('npm'))).toEqual(['npm ci']);
     expect(b.lines().filter((l) => l.startsWith('npm'))).toEqual(['npm ci']);
     // One entry, no scratch folders, and it's one whole install, not a mix.
@@ -1287,7 +1727,7 @@ describe('dependency cache', () => {
       inference: scriptedInference([reproduce, fix]),
     });
 
-    expect(out.status).toBe('proposed');
+    expect(out.status).toBe('pr_opened');
     expect(sandbox.calls[0]).toMatchObject({
       cmd: ['npm', 'install'],
       workdir: join(base, 'tasks', 't1', 'repo'),

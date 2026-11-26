@@ -1,11 +1,9 @@
 import {
   CreateTaskInput,
-  DecideInput,
   fail,
   ok,
   paths,
   type CreateTaskResponse,
-  type Result,
   type TaskSnapshot,
 } from '@app/shared';
 import type { FastifyInstance } from 'fastify';
@@ -48,7 +46,7 @@ export const taskRoutes = (
           )
         );
       }
-      const taskId = store.create(input.data, role.policy.approval);
+      const taskId = store.create(input.data);
       if (!queue.submit(taskId)) {
         store.emit(taskId, {
           type: 'status',
@@ -94,57 +92,8 @@ export const taskRoutes = (
     return reply.type('text/x-diff; charset=utf-8').send(diff);
   });
 
-  // Who may decide: the approver named by the creating role's policy, or the
-  // creating role itself when its policy names none.
-  const decide = (
-    id: unknown,
-    body: unknown,
-    decision: 'approved' | 'rejected'
-  ): Result<TaskSnapshot> => {
-    const params = Params.safeParse(id);
-    const task = params.success ? store.snapshot(params.data.id) : null;
-    if (!task) return fail('not_found', 'No such task');
-    const input = DecideInput.safeParse(body);
-    if (!input.success) return fail('invalid', z.prettifyError(input.error));
-    const allowedFrom =
-      decision === 'approved'
-        ? ['proposed']
-        : ['proposed', 'flagged', 'gave_up'];
-    if (!allowedFrom.includes(task.status)) {
-      return fail('conflict', `A ${task.status} task can't be ${decision}`);
-    }
-    const approver = task.approver ?? task.input.role;
-    if (input.data.role !== approver) {
-      return fail(
-        'forbidden',
-        `Only ${approver} can decide on ${task.input.role} tasks`
-      );
-    }
-    store.emit(task.id, {
-      type: 'approval',
-      by: input.data.role,
-      decision,
-      ...(input.data.reason ? { reason: input.data.reason } : {}),
-    });
-    store.emit(task.id, {
-      type: 'status',
-      status: decision,
-      reason: input.data.reason ?? `${decision} by ${input.data.role}`,
-    });
-    if (decision === 'approved') queue.deploy(task.id);
-    return ok(store.snapshot(task.id)!);
-  };
-
-  app.post('/api/tasks/:id/approve', async (request, reply) =>
-    sendResult(request, reply, decide(request.params, request.body, 'approved'))
-  );
-  app.post('/api/tasks/:id/reject', async (request, reply) =>
-    sendResult(request, reply, decide(request.params, request.body, 'rejected'))
-  );
-
-  // Replays the task's events after ?after=<seq>, then streams new ones. A
-  // task lives on after its run (approval, deploy), so the socket stays open
-  // until the client leaves.
+  // Replays the task's events after ?after=<seq>, then streams new ones. The
+  // socket stays open until the client leaves.
   app.get('/api/tasks/:id/events', { websocket: true }, (socket, request) => {
     const params = Params.safeParse(request.params);
     const query = EventsQuery.safeParse(request.query);

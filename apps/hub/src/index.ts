@@ -12,7 +12,12 @@ import { loadEnv } from './env.ts';
 import { loadHub } from './hub/load.ts';
 import { createMockRunner } from './tasks/mockRunner.ts';
 import { removeLeftoverScratch } from './tasks/depsCache.ts';
+import { createHubSync } from './tasks/hubSync.ts';
 import { createPipeline } from './tasks/pipeline.ts';
+import {
+  createGitHubPublisher,
+  createLocalPublisher,
+} from './tasks/publisher.ts';
 import type { TaskRunner } from './tasks/runner.ts';
 
 const env = loadEnv();
@@ -49,7 +54,30 @@ if (env.RUNNER === 'real') {
     depsCacheDir,
     egressAdminUrl: env.EGRESS_ADMIN_URL,
     keepWorkspaces: env.KEEP_WORKSPACES,
+    // One sync for the hub: every task starts from origin's main, if the
+    // hub repo has an origin, under one lock.
+    sync: createHubSync(hub),
+    // GITHUB_REPO set: push to origin and open a pull request there.
+    // Unset: a branch in the hub repo and a file:// link.
+    // The env schema requires a token with GITHUB_REPO and RUNNER=real.
+    publisher: env.github
+      ? createGitHubPublisher({
+          hubRepoDir: hub.repoDir,
+          scratchDir: tasksDir,
+          repo: env.github.repo,
+          token: env.github.token,
+          apiUrl: env.GITHUB_API_URL,
+        })
+      : createLocalPublisher({
+          hubRepoDir: hub.repoDir,
+          scratchDir: tasksDir,
+        }),
   });
+  console.log(
+    env.github
+      ? `Publishing pull requests to ${env.github.repo.owner}/${env.github.repo.name}`
+      : 'Publishing branches in the hub repo (GITHUB_REPO unset)'
+  );
 } else {
   runner = createMockRunner(hub, { previewBaseUrl: env.PREVIEW_BASE_URL });
 }

@@ -1,8 +1,8 @@
 import { Role } from '@app/shared';
 import { Link, Outlet, useParams } from 'react-router';
 
-// No auth in the demo: the role travels in the URL, and the hub checks it on
-// every approval against the role policies. The support rep's view is the
+// No auth in the demo: the role travels in the URL, and the hub checks every
+// task it starts against that role's policy. The support rep's view is the
 // product; a developer only lands here from a review link.
 export const Layout = () => {
   const role = Role.safeParse(useParams().role);
