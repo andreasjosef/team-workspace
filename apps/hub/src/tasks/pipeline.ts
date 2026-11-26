@@ -30,7 +30,7 @@ import {
 } from '@app/sandbox';
 import { lstat, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { reloadHub, type Hub } from '../hub/load.ts';
+import type { Hub } from '../hub/load.ts';
 import {
   createScratch,
   findEntry,
@@ -39,9 +39,9 @@ import {
   readLockfile,
   removeScratch,
 } from './depsCache.ts';
+import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 import {
-  applyToHub,
   branchFromHub,
   checkPatch,
   createWorkspace,
@@ -51,16 +51,18 @@ import {
   type Workspace,
 } from './workspace.ts';
 
-// The real task: context → baseline → fix → (preview) → proposed. Untrusted
-// code only ever runs through runInSandbox; this file runs on the host and
-// holds the secrets (the inference key lives inside `inference`).
+// The real task: sync → context → baseline → fix → (preview) → publish, which
+// opens a pull request. Untrusted code only ever runs through runInSandbox;
+// this file runs on the host and holds the secrets (the inference key lives
+// inside `inference`, a GitHub token inside `publisher`).
 //
 // Written against the same building blocks as the upgrade agent's pipeline,
 // which ran end to end; this one hasn't yet. See README "What's left".
 
 // Every side effect that leaves the host process is a dep: the hub's start-up
-// wiring passes `runInSandbox`, `fetchDenied` and the live inference; the
-// pipeline test passes fakes (pipeline.test.ts).
+// wiring passes `runInSandbox`, `fetchDenied`, the live inference and the
+// publisher; the pipeline test passes fakes and a local publisher
+// (pipeline.test.ts).
 export type SandboxRunner = typeof runInSandbox;
 export type DeniedLogFetch = typeof fetchDenied;
 
@@ -75,6 +77,8 @@ export type PipelineDeps = {
   depsCacheDir: string;
   egressAdminUrl: string;
   keepWorkspaces: boolean;
+  // Syncs the hub repo before a task, and opens its pull request after.
+  publisher: Publisher;
 };
 
 const MAX_REFUSALS = 3;
@@ -90,38 +94,6 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
     } finally {
       if (!deps.keepWorkspaces) await removeWorkspace(ws);
     }
-  },
-
-  // The patch was made from paths the policy allowed; check it again anyway
-  // (the role file or the patch could have changed since), then commit.
-  deploy: async ({ input, policy, emit }, diff) => {
-    emit({ type: 'phase', phase: 'deploy' });
-    const problem = checkPatch(policy, diff);
-    if (problem) {
-      emit({
-        type: 'status',
-        status: 'error',
-        reason: `Patch refused at deploy: ${problem}`,
-      });
-      return;
-    }
-    const failed = await applyToHub(
-      deps.hub.repoDir,
-      diff,
-      `${input.title}\n\nTask from ${policy.label}, approved in the hub.`
-    );
-    if (failed) {
-      emit({ type: 'status', status: 'error', reason: failed });
-      return;
-    }
-    await reloadHub(deps.hub);
-    emit({ type: 'log', message: 'Committed to main' });
-    // TODO(deploy track): push to GitHub and restart the prod container.
-    emit({
-      type: 'status',
-      status: 'deployed',
-      reason: 'Committed to main on the hub',
-    });
   },
 });
 
@@ -154,8 +126,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   emit({ type: 'status', status: 'working' });
 
-  // Context: a fresh copy of main, then what the agent gets to see.
+  // Context: the hub repo brought up to date, a fresh copy of its main, then
+  // what the agent gets to see. The pull request's branch is cut at the
+  // commit synced here, whatever main does meanwhile.
   emit({ type: 'phase', phase: 'context' });
+  const { baseSha } = await deps.publisher.sync();
+  emit({ type: 'base', sha: baseSha });
   await branchFromHub(ws, deps.hub.repoDir);
   const signals = scanTaskInput(input.text);
   if (signals.length) emit({ type: 'input_flagged', signals });
@@ -401,9 +377,10 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     onNote: (message) => emit({ type: 'log', message }),
   });
 
-  setDiff(await diffPaths(ws, [...touched]));
-  // A flagged report always ends flagged: green checks never make it
-  // proposed (a model that refused the report's instructions still produced
+  const diff = await diffPaths(ws, [...touched]);
+  setDiff(diff);
+  // A flagged report always ends flagged: green checks never publish it
+  // (a model that refused the report's instructions still produced
   // a change nobody asked for in good faith), and a loop that gave up ends
   // flagged too, keeping its own reason so the receipt shows why it stopped.
   // Decided on host facts only (the scanner's signals and the loop's
@@ -416,7 +393,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       status: 'flagged',
       reason:
         outcome.status === 'green'
-          ? `${carriedInstructions}, so the change was not proposed`
+          ? `${carriedInstructions}, so no pull request was opened`
           : `${carriedInstructions}; ${outcome.reason}`,
     });
     return;
@@ -429,12 +406,53 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
-  // TODO(sandbox track): start a preview container from this worktree and
-  // emit { type: 'preview', url }. See docs/architecture.md, "Previews".
+  await publish(deps, task, baseSha, diff);
+};
+
+// Green: the checked patch goes out as a pull request. The patch was made
+// from paths the policy allowed; check it again anyway (a test run could
+// have swapped a file for a symlink since), then hand it to the publisher.
+// Nothing here touches the hub repo's main.
+const publish = async (
+  deps: PipelineDeps,
+  { input, policy, branch, emit }: TaskHandle,
+  baseSha: string,
+  diff: string
+) => {
+  emit({ type: 'phase', phase: 'publish' });
+  const problem = checkPatch(policy, diff);
+  if (problem) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `Patch refused at publish: ${problem}`,
+    });
+    return;
+  }
+  // Placeholders until the receipt builder writes the title and body. The
+  // task text stays out of both: it's untrusted.
+  const published = await deps.publisher.publish({
+    branch,
+    baseSha,
+    patch: diff,
+    title: `[support] ${input.incidentId ?? 'Report'}: fix from the hub`,
+    body: `Opened by the hub for ${input.incidentId ?? 'a forwarded report'}. Checks pass in the sandbox; the receipt is in the hub.`,
+    draft: false,
+    message: commitMessage(input),
+  });
+  if (!published.success) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `Publishing failed: ${published.message}`,
+    });
+    return;
+  }
+  emit({ type: 'pr', ...published.value, draft: false });
   emit({
     type: 'status',
-    status: 'proposed',
-    reason: 'Checks pass in the sandbox',
+    status: 'pr_opened',
+    reason: `Pull request #${published.value.number} is open for a developer`,
   });
 };
 

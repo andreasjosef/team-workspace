@@ -183,14 +183,25 @@ const pickScenario = (text: string, signals: string[]): Scenario | null => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Stands in for the commit a real task syncs to. Not a real commit.
+const MOCK_BASE_SHA = '0000000000000000000000000000000000000042';
+
 export const createMockRunner = (
   hub: Hub,
   opts: { stepMs?: number; previewBaseUrl?: string } = {}
 ): TaskRunner => {
   const stepMs = opts.stepMs ?? 700;
   const step = () => sleep(stepMs);
+  let opened = 0;
 
-  const run = async ({ id, input, policy, emit, setDiff }: TaskHandle) => {
+  const run = async ({
+    id,
+    branch,
+    input,
+    policy,
+    emit,
+    setDiff,
+  }: TaskHandle) => {
     const text = `${input.title}\n${input.text}`;
     const cmd = (c: string, output: string, exitCode = 0) =>
       emit({
@@ -203,7 +214,11 @@ export const createMockRunner = (
 
     emit({ type: 'status', status: 'working' });
     emit({ type: 'phase', phase: 'context' });
-    emit({ type: 'log', message: `Branch task/${id.slice(0, 8)} from main` });
+    emit({ type: 'base', sha: MOCK_BASE_SHA });
+    emit({
+      type: 'log',
+      message: `Copy of main at ${MOCK_BASE_SHA.slice(0, 7)}`,
+    });
     const signals = scanTaskInput(input.text);
     if (signals.length) emit({ type: 'input_flagged', signals });
     const files = rankFiles(hub.sourceFiles, text);
@@ -306,25 +321,23 @@ export const createMockRunner = (
         url: `${opts.previewBaseUrl.replace('{id}', id.slice(0, 8))}`,
       });
     }
+    // A fake pull request: no GitHub, nothing written anywhere.
+    emit({ type: 'phase', phase: 'publish' });
+    await step();
+    cmd('git apply --index', `Applied cleanly on ${branch}`);
+    const number = ++opened;
+    emit({
+      type: 'pr',
+      url: `https://github.invalid/demo/shop/pull/${number}`,
+      number,
+      draft: false,
+    });
     emit({
       type: 'status',
-      status: 'proposed',
-      reason: 'Checks pass in the sandbox',
+      status: 'pr_opened',
+      reason: `Pull request #${number} is open for a developer`,
     });
   };
 
-  const deploy = async ({ id, input, emit }: TaskHandle) => {
-    emit({ type: 'phase', phase: 'deploy' });
-    await step();
-    cmd(emit, `git apply --index (task/${id.slice(0, 8)})`, 'Applied cleanly');
-    emit({ type: 'log', message: `Committed "${input.title}" to main` });
-    await step();
-    cmd(emit, 'docker restart shop-prod', 'shop-prod');
-    emit({ type: 'status', status: 'deployed', reason: 'Live on main' });
-  };
-
-  return { run, deploy };
+  return { run };
 };
-
-const cmd = (emit: TaskHandle['emit'], c: string, output: string) =>
-  emit({ type: 'command', cmd: c, exitCode: 0, durationMs: 400, output });

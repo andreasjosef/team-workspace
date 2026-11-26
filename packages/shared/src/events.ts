@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { Role } from './roles.ts';
 
 // The one contract between the hub and the UI: every task is a stream of
 // these. Status changes travel as `status` events too, so the snapshot is
@@ -10,20 +9,18 @@ export const Phase = z.enum([
   'baseline',
   'fix',
   'preview',
-  'deploy',
+  'publish',
 ]);
 export type Phase = z.infer<typeof Phase>;
 
 export const TaskStatus = z.enum([
   'queued',
   'working',
-  'proposed', // green in the sandbox, waiting for approval
+  'proposed', // green in the sandbox, not published
+  'pr_opened', // published: a pull request waits for a developer
   'gave_up', // stop rules hit
   'flagged', // policy refusals or a blocked network call: a human looks first
-  'approved',
-  'rejected',
-  'deployed',
-  'error', // the runner crashed
+  'error', // the runner crashed, or publishing failed
 ]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
@@ -31,6 +28,13 @@ export const BlockedKind = z.enum(['network', 'timeout', 'memory', 'pids']);
 export type BlockedKind = z.infer<typeof BlockedKind>;
 
 export const ContextDoc = z.object({ id: z.string(), title: z.string() });
+
+export const PullRequest = z.object({
+  url: z.string(),
+  number: z.number().int(),
+  draft: z.boolean(),
+});
+export type PullRequest = z.infer<typeof PullRequest>;
 
 export const TaskEvent = z.discriminatedUnion('type', [
   z.object({
@@ -58,6 +62,9 @@ export const TaskEvent = z.discriminatedUnion('type', [
     detail: z.string(),
   }),
   z.object({ type: z.literal('log'), message: z.string() }),
+  // The commit of the hub repo's main the task started from. Its pull
+  // request's branch is cut here.
+  z.object({ type: z.literal('base'), sha: z.string() }),
   // What went into the prompt: the agent's context, shown on the receipt.
   z.object({
     type: z.literal('context'),
@@ -73,12 +80,8 @@ export const TaskEvent = z.discriminatedUnion('type', [
   // The input scanner found signs of instructions hidden in the task text.
   z.object({ type: z.literal('input_flagged'), signals: z.array(z.string()) }),
   z.object({ type: z.literal('preview'), url: z.string() }),
-  z.object({
-    type: z.literal('approval'),
-    by: Role,
-    decision: z.enum(['approved', 'rejected']),
-    reason: z.string().optional(),
-  }),
+  // The pull request the hub opened. Followed by status `pr_opened`.
+  z.object({ type: z.literal('pr'), ...PullRequest.shape }),
 ]);
 export type TaskEvent = z.infer<typeof TaskEvent>;
 

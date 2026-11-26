@@ -8,22 +8,12 @@ export type Tone = 'gold' | 'green' | 'red' | 'blue' | 'muted';
 export const statusLook: Record<TaskStatus, { label: string; tone: Tone }> = {
   queued: { label: 'Queued', tone: 'blue' },
   working: { label: 'Agent working', tone: 'blue' },
-  proposed: { label: 'In review', tone: 'gold' },
+  proposed: { label: 'Checks pass', tone: 'gold' },
+  pr_opened: { label: 'In review', tone: 'gold' },
   gave_up: { label: 'Gave up', tone: 'muted' },
   flagged: { label: 'Flagged', tone: 'red' },
-  approved: { label: 'Deploying', tone: 'blue' },
-  rejected: { label: 'Rejected', tone: 'muted' },
-  deployed: { label: 'Live', tone: 'green' },
   error: { label: 'Error', tone: 'red' },
 };
-
-export const decider = (t: TaskSnapshot): Role => t.approver ?? t.input.role;
-
-export const canApprove = (t: TaskSnapshot, role: Role) =>
-  t.status === 'proposed' && decider(t) === role;
-
-export const canReject = (t: TaskSnapshot, role: Role) =>
-  ['proposed', 'flagged', 'gave_up'].includes(t.status) && decider(t) === role;
 
 // Did a check fail more tests than the baseline? That's the reproduction.
 export const reproduced = (t: TaskSnapshot) => {
@@ -70,25 +60,19 @@ export const outcome = (t: TaskSnapshot): Outcome => {
       };
     case 'proposed':
       return {
-        headline: 'A fix is ready for review',
+        headline: 'A fix passes the tests',
         detail:
-          'The agent reproduced the problem with a test, then fixed it. A developer reviews the change before it ships.',
-        customer: "We've confirmed the problem, and a fix is in review.",
+          'The agent reproduced the problem with a test, then fixed it. Opening a pull request for a developer.',
+        customer: null,
         tone: 'gold',
       };
-    case 'approved':
+    case 'pr_opened':
       return {
-        headline: 'Fix approved',
-        detail: 'A developer approved the fix. It ships now.',
-        customer: "We've fixed it. It goes live shortly.",
-        tone: 'blue',
-      };
-    case 'deployed':
-      return {
-        headline: 'Fixed and live',
-        detail: 'A developer approved the fix, and it shipped.',
-        customer: "It's fixed. Thanks for telling us.",
-        tone: 'green',
+        headline: 'A fix is ready for review',
+        detail:
+          'The agent reproduced the problem with a test, then fixed it. A developer reviews the pull request before it ships.',
+        customer: "We've confirmed the problem, and a fix is in review.",
+        tone: 'gold',
       };
     case 'flagged':
       return {
@@ -115,13 +99,6 @@ export const outcome = (t: TaskSnapshot): Outcome => {
             customer: null,
             tone: 'muted',
           };
-    case 'rejected':
-      return {
-        headline: 'Closed by a developer',
-        detail: 'A developer closed this without shipping it.',
-        customer: null,
-        tone: 'muted',
-      };
     case 'error':
       return {
         headline: 'Something went wrong on our side',
@@ -132,18 +109,14 @@ export const outcome = (t: TaskSnapshot): Outcome => {
   }
 };
 
-// The four steps from report to shipped fix, for the progress strip.
+// The four steps from report to reviewed fix, for the progress strip.
 export type StepState = 'done' | 'current' | 'todo' | 'stopped';
 export type Step = { label: string; state: StepState };
 
 export const progress = (t: TaskSnapshot): Step[] => {
   const live = t.status === 'queued' || t.status === 'working';
-  // A rejected task had a passing fix; a developer closed it at review.
-  const fixed = ['proposed', 'approved', 'deployed', 'rejected'].includes(
-    t.status
-  );
-  const ended =
-    !live && !['proposed', 'approved', 'deployed'].includes(t.status);
+  const fixed = t.status === 'proposed' || t.status === 'pr_opened';
+  const ended = !live && !fixed;
   const repro = reproduced(t) || fixed;
   const step = (label: string, done: boolean, current: boolean): Step => ({
     label,
@@ -153,11 +126,9 @@ export const progress = (t: TaskSnapshot): Step[] => {
     step('Report received', true, false),
     step('Problem reproduced', repro, live),
     step('Fix passes the tests', fixed, live && repro),
-    step(
-      'Developer review',
-      t.status === 'approved' || t.status === 'deployed',
-      t.status === 'proposed'
-    ),
+    // The review happens on the pull request; the hub doesn't follow it
+    // after it opens, so this step stays current.
+    step('Developer review', false, t.status === 'pr_opened'),
   ];
   // Where an ended task stopped: the first step it didn't finish.
   if (ended) {
@@ -171,9 +142,7 @@ export const createdBy = (tasks: TaskSnapshot[], role: Role) =>
   tasks.filter((t) => t.input.role === role);
 
 export const taskForIncident = (tasks: TaskSnapshot[], incidentId: string) =>
-  tasks.find(
-    (t) => t.input.incidentId === incidentId && t.status !== 'rejected'
-  );
+  tasks.find((t) => t.input.incidentId === incidentId);
 
 export const timeAgo = (iso: string, now = Date.now()) => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));

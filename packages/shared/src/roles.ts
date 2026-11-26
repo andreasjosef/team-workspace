@@ -24,7 +24,8 @@ export const RolePolicy = z.object({
   }),
   // Lines added + removed per proposal.
   maxChangedLines: z.number().int().positive().default(200),
-  // Who has to approve this role's tasks. null = the role merges its own.
+  // Ignored since pull requests replaced in-hub approval: a developer merges
+  // on GitHub. Kept so the role files still parse; spec 5 removes it.
   approval: Role.nullable(),
 });
 export type RolePolicy = z.infer<typeof RolePolicy>;

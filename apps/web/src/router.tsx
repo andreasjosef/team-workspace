@@ -5,8 +5,8 @@ import { CsView } from './pages/CsView.tsx';
 import { TaskPage } from './pages/TaskPage.tsx';
 
 // The product is the support rep's view. A task page still works under any
-// role's URL (`/dev/tasks/:id` is where a developer approves until pull
-// requests replace in-hub approval), but only cs has a home.
+// role's URL (`/dev/tasks/:id`), but only cs has a home. Developers review
+// on the pull request, not here.
 const RoleHome = () => {
   const role = Role.safeParse(useParams().role);
   if (!role.success || role.data !== 'cs') return <Navigate to="/cs" replace />;

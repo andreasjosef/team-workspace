@@ -73,7 +73,7 @@ const Report = ({ report }: { report: Incident }) => {
         · {timeAgo(report.at)}
       </p>
       <h1 className="focus-title">{report.subject}</h1>
-      {task && <OutcomeCard task={task} role="cs" />}
+      {task && <OutcomeCard task={task} />}
       <section className="message">
         <div className="untrusted-label">
           {report.customer} wrote · treated as untrusted

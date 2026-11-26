@@ -13,6 +13,7 @@ import { loadHub } from './hub/load.ts';
 import { createMockRunner } from './tasks/mockRunner.ts';
 import { removeLeftoverScratch } from './tasks/depsCache.ts';
 import { createPipeline } from './tasks/pipeline.ts';
+import { createLocalPublisher } from './tasks/publisher.ts';
 import type { TaskRunner } from './tasks/runner.ts';
 
 const env = loadEnv();
@@ -49,6 +50,12 @@ if (env.RUNNER === 'real') {
     depsCacheDir,
     egressAdminUrl: env.EGRESS_ADMIN_URL,
     keepWorkspaces: env.KEEP_WORKSPACES,
+    // Local only for now: a branch in the hub repo and a file:// link. The
+    // GitHub publisher takes over when GITHUB_REPO is set.
+    publisher: createLocalPublisher({
+      hubRepoDir: hub.repoDir,
+      scratchDir: tasksDir,
+    }),
   });
 } else {
   runner = createMockRunner(hub, { previewBaseUrl: env.PREVIEW_BASE_URL });

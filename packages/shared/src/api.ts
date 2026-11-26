@@ -10,8 +10,6 @@ export const paths = {
   tasks: '/api/tasks', // GET → TaskSnapshot[] · POST CreateTaskInput → CreateTaskResponse
   task: (id: string) => `/api/tasks/${id}`, // GET → TaskSnapshot
   diff: (id: string) => `/api/tasks/${id}/diff`, // GET → text/x-diff
-  approve: (id: string) => `/api/tasks/${id}/approve`, // POST DecideInput → TaskSnapshot
-  reject: (id: string) => `/api/tasks/${id}/reject`, // POST DecideInput → TaskSnapshot
   events: (id: string) => `/api/tasks/${id}/events`, // WS → EventEnvelope*
 } as const;
 

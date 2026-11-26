@@ -1,8 +1,6 @@
 import type { TaskSnapshot } from '@app/shared';
 import { describe, expect, it } from 'vitest';
 import {
-  canApprove,
-  canReject,
   outcome,
   progress,
   reproduced,
@@ -15,10 +13,10 @@ const task = (patch: Partial<TaskSnapshot>): TaskSnapshot => ({
   createdAt: '2026-11-18T10:00:00Z',
   updatedAt: '2026-11-18T10:00:00Z',
   input: { role: 'cs', kind: 'bug', title: 'Discount', text: 'x' },
-  status: 'proposed',
+  status: 'pr_opened',
   statusReason: null,
-  approver: 'dev',
   branch: 'task/x',
+  baseSha: 'abc123',
   phase: null,
   iterations: [],
   context: { files: [], decisions: [] },
@@ -27,28 +25,8 @@ const task = (patch: Partial<TaskSnapshot>): TaskSnapshot => ({
   blocked: [],
   previewUrl: null,
   hasDiff: true,
-  decidedBy: null,
+  pr: { url: 'https://github.invalid/pull/7', number: 7, draft: false },
   ...patch,
-});
-
-describe('who decides', () => {
-  it("lets the policy's approver decide, not the creator", () => {
-    expect(canApprove(task({}), 'dev')).toBe(true);
-    expect(canApprove(task({}), 'cs')).toBe(false);
-  });
-
-  it('lets a role without an approver decide on its own tasks', () => {
-    const own = task({
-      approver: null,
-      input: { role: 'dev', kind: 'change', title: 'x', text: 'x' },
-    });
-    expect(canApprove(own, 'dev')).toBe(true);
-  });
-
-  it('allows closing flagged tasks, never approving them', () => {
-    expect(canApprove(task({ status: 'flagged' }), 'dev')).toBe(false);
-    expect(canReject(task({ status: 'flagged' }), 'dev')).toBe(true);
-  });
 });
 
 const iters = (...failing: number[]) =>
@@ -61,9 +39,10 @@ describe('plain words for the support rep', () => {
     expect(reproduced(task({ iterations: iters(1, 1) }))).toBe(false);
   });
 
-  it('says a proposed fix is in review, with a line for the customer', () => {
+  it('says a fix with a pull request is in review, with a line for the customer', () => {
     const o = outcome(task({ iterations: iters(0, 1, 0) }));
     expect(o.headline).toBe('A fix is ready for review');
+    expect(o.detail).toMatch(/pull request/);
     expect(o.tone).toBe('gold');
     expect(o.customer).toMatch(/confirmed/);
   });
@@ -103,12 +82,10 @@ describe('plain words for the support rep', () => {
     expect(
       states(task({ status: 'gave_up', iterations: iters(0, 1, 1, 1) }))
     ).toEqual(['done', 'done', 'stopped', 'todo']);
+    // Green, but publishing failed: it stopped before the developer.
     expect(
-      states(task({ status: 'rejected', iterations: iters(0, 1, 0) }))
-    ).toEqual(['done', 'done', 'done', 'stopped']);
-    expect(
-      states(task({ status: 'deployed', iterations: iters(0, 1, 0) }))
-    ).toEqual(['done', 'done', 'done', 'done']);
+      states(task({ status: 'error', pr: null, iterations: iters(0, 1, 0) }))
+    ).toEqual(['done', 'done', 'stopped', 'todo']);
   });
 });
 
@@ -124,9 +101,7 @@ describe('helpers', () => {
       },
     });
     expect(taskForIncident([t], 'INC-1')).toBe(t);
-    expect(
-      taskForIncident([{ ...t, status: 'rejected' }], 'INC-1')
-    ).toBeUndefined();
+    expect(taskForIncident([t], 'INC-2')).toBeUndefined();
   });
 
   it('says how long ago', () => {

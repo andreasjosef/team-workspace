@@ -4,6 +4,8 @@ import type { CreateTaskInput, RolePolicy, TaskEvent } from '@app/shared';
 // implement TaskRunner, so the API and UI can't tell them apart.
 export type TaskHandle = {
   id: string;
+  // The branch a green task is published on: `task/<short id>`.
+  branch: string;
   input: CreateTaskInput;
   policy: RolePolicy;
   rolePrompt: string;
@@ -12,8 +14,7 @@ export type TaskHandle = {
 };
 
 export type TaskRunner = {
-  // created → working → proposed | gave_up | flagged
+  // queued → working → pr_opened | gave_up | flagged | error. Publishing
+  // the pull request is the run's last step; the hub never merges.
   run: (task: TaskHandle) => Promise<void>;
-  // approved → deployed. Called only by the hub, only after approval.
-  deploy: (task: TaskHandle, diff: string) => Promise<void>;
 };

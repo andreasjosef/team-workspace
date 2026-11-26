@@ -187,6 +187,12 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
     <section className="receipt">
       <div className="receipt-head">
         <h2>Receipt</h2>
+        {task.pr && (
+          <a className="receipt-pr" href={task.pr.url} rel="noreferrer">
+            Pull request #{task.pr.number}
+            {task.pr.draft ? ' (draft)' : ''}
+          </a>
+        )}
         <div className="tabs" role="tablist">
           {tabs
             .filter((t) => !t.hidden)

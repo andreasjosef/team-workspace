@@ -12,7 +12,7 @@ One Vultr VM. The hub holds the secrets and the product repo's `main`; untrusted
  ┌──────────────────────▼──────────────────────────┐
  │ Hub (apps/hub, systemd, user `hub`)             │   holds: VULTR_INFERENCE_API_KEY
  │  roles from .hub/ → task queue → task loop      │──────────▶ Vultr Serverless Inference
- │  approvals → git apply + commit to main         │
+ │  green → branch task/<id> → pull request        │
  │  hub repo checkout (trusted) + task worktrees   │
  └───────┬───────────────────────────┬─────────────┘
          │ docker run (per command)  │ GET /denied (127.0.0.1:8081)
@@ -44,25 +44,26 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 - **Enforced on every proposed edit** by `checkPolicy` (`packages/agent/src/policy.ts`), before anything is written. The prompt explains the scope; this holds the model to it.
 - **Deny wins over allow.** `*` stays in one directory, `**` crosses directories, `dir/**` includes `dir`.
 - **`.hub/` is never agent-writable**, whatever a role file says, so a ticket can't talk an agent into widening its own scope. Policies change only through a dev's own commit.
-- **Approval:** the role named in `approval` decides on the role's tasks; `null` means the role merges its own (the dev, in the demo). Checked by the hub on approve and reject (`routes/tasks.ts`).
+- **No approval in the hub:** a green task opens a pull request, and a developer merges it on GitHub. The role file's `approval` field is ignored (spec 5 removes it).
 - **No auth in the demo.** The UI sends the role it's showing. Say so when demoing.
 
 ## A task
 
-One task is one request from one role, and it ends proposed (green, waiting for approval), gave up, flagged, or errored. A task whose text the input scanner flagged never ends proposed: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
+One task is one request from one role, and it ends `pr_opened` (green, a pull request waits for a developer), gave up, flagged, or errored. A task whose text the input scanner flagged never opens a pull request: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
 
-| Phase    | Where   | Network             | What                                                                                                                                         |
-| -------- | ------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions         |
-| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts          |
-| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug goes reproduce, then fix (below). Halts on 3 refusals or a network attempt |
-| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                     |
-| deploy   | host    | GitHub (todo)       | After approval only: `checkPatch` again, `git apply --index` + commit on the hub repo, reload docs                                           |
+| Phase    | Where   | Network             | What                                                                                                                                                               |
+| -------- | ------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions                               |
+| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts                                |
+| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug goes reproduce, then fix (below). Halts on 3 refusals or a network attempt                       |
+| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                                           |
+| publish  | host    | GitHub (todo)       | Green only: `checkPatch` again, then the `Publisher` (`publisher.ts`): a fresh worktree on `task/<id>` at the base SHA, `git apply --index` + commit. Never `main` |
 
 ```
-queued → working → proposed → approved → deployed
-                 ↘ gave_up    ↘ rejected
-                 ↘ flagged → rejected
+queued → working → pr_opened
+                 ↘ gave_up
+                 ↘ flagged
+                 ↘ error (also: patch refused or publishing failed)
 ```
 
 "Green" means no more type errors and failing tests than the baseline, **and** at least one accepted proposal: a task starts green, so the plain stop rule would end it before it did anything (`runTaskLoop` in `packages/agent/src/fixLoop.ts`).
@@ -90,18 +91,18 @@ Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `
 
 ## Containment, and where each rule lives
 
-| Concern            | How                                                                                                                                                                                                                            | Code                               |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Untrusted text     | Wrapped and labelled as data in the prompt. `scanTaskInput` flags instruction overrides, secret names, elevated access, URLs, shell commands, encoded blobs. It flags; the rows below are the protection                       | `packages/agent/src/inputScan.ts`  |
-| Write scope        | Role policy on every edit, all or nothing; every refusal is a `policy_refused` event; 3 refusals flag the task                                                                                                                 | `policy.ts`, `pipeline.ts`         |
-| Edits              | Search/replace on existing files or create new ones. No changes to existing tests, lockfiles, `node_modules`, `.git`; no big deletions; no paths through symlinks; a create never overwrites                                   | `edits.ts`, `safePath.ts`          |
-| Process isolation  | One container per command, `--init`, gVisor via `SANDBOX_RUNTIME=runsc` when available                                                                                                                                         | `packages/sandbox/src/args.ts`     |
-| Secrets            | Container env built from scratch. No env files, no npmrc, no mounts but `/work` and the dependency cache entry (read-only)                                                                                                     | `buildRunArgs`                     |
-| Network            | Install: internal `sandbox` network whose only reachable service is the proxy (GET/HEAD to Verdaccio). Checks and fixes: `--network none`. A test run that tries to connect anyway is reported as `blocked` and halts the task | `apps/egress-proxy`, `pipeline.ts` |
-| Resources          | 1 GB, 1 CPU, 256 pids, 120 s per command, read-only root, `--cap-drop ALL`, `no-new-privileges`, non-root uid                                                                                                                  | `args.ts`, `run.ts`                |
-| What gets proposed | The diff holds only paths the agent edited through the policy check. Anything else a test run wrote in the worktree (`.hub/` included) never reaches it                                                                        | `diffPaths` in `workspace.ts`      |
-| What gets shipped  | Only after approval by the policy's approver. `checkPatch` re-checks every path against the role, and refuses symlinks, binary patches and mode changes. `git apply` runs inside the hub repo                                  | `routes/tasks.ts`, `workspace.ts`  |
-| Audit              | Every command, edit, refusal, block, approval and status change is an event on the task's stream                                                                                                                               | `TaskEvent` in `packages/shared`   |
+| Concern             | How                                                                                                                                                                                                                            | Code                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Untrusted text      | Wrapped and labelled as data in the prompt. `scanTaskInput` flags instruction overrides, secret names, elevated access, URLs, shell commands, encoded blobs. It flags; the rows below are the protection                       | `packages/agent/src/inputScan.ts`                |
+| Write scope         | Role policy on every edit, all or nothing; every refusal is a `policy_refused` event; 3 refusals flag the task                                                                                                                 | `policy.ts`, `pipeline.ts`                       |
+| Edits               | Search/replace on existing files or create new ones. No changes to existing tests, lockfiles, `node_modules`, `.git`; no big deletions; no paths through symlinks; a create never overwrites                                   | `edits.ts`, `safePath.ts`                        |
+| Process isolation   | One container per command, `--init`, gVisor via `SANDBOX_RUNTIME=runsc` when available                                                                                                                                         | `packages/sandbox/src/args.ts`                   |
+| Secrets             | Container env built from scratch. No env files, no npmrc, no mounts but `/work` and the dependency cache entry (read-only)                                                                                                     | `buildRunArgs`                                   |
+| Network             | Install: internal `sandbox` network whose only reachable service is the proxy (GET/HEAD to Verdaccio). Checks and fixes: `--network none`. A test run that tries to connect anyway is reported as `blocked` and halts the task | `apps/egress-proxy`, `pipeline.ts`               |
+| Resources           | 1 GB, 1 CPU, 256 pids, 120 s per command, read-only root, `--cap-drop ALL`, `no-new-privileges`, non-root uid                                                                                                                  | `args.ts`, `run.ts`                              |
+| What gets proposed  | The diff holds only paths the agent edited through the policy check. Anything else a test run wrote in the worktree (`.hub/` included) never reaches it                                                                        | `diffPaths` in `workspace.ts`                    |
+| What gets published | Only a green task's diff, on its own branch. `checkPatch` re-checks every path against the role, and refuses symlinks, binary patches and mode changes. `git apply` runs in a fresh worktree of the hub repo, never on `main`  | `pipeline.ts`, `publishBranch` in `workspace.ts` |
+| Audit               | Every command, edit, refusal, block, pull request and status change is an event on the task's stream                                                                                                                           | `TaskEvent` in `packages/shared`                 |
 
 ## Dependency cache
 
