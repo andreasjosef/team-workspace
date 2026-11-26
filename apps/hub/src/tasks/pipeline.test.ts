@@ -42,7 +42,11 @@ import {
   type SandboxRunner,
 } from './pipeline.ts';
 import { createHubSync, type HubSync } from './hubSync.ts';
-import { createLocalPublisher, type Publisher } from './publisher.ts';
+import {
+  createLocalPublisher,
+  type Publisher,
+  type PublishInput,
+} from './publisher.ts';
 import { git } from './workspace.ts';
 
 // The real pipeline from forward to outcome, without a VM: a throwaway hub
@@ -415,15 +419,41 @@ describe('pipeline', () => {
     const mainBefore = await hubGit(hub, ['rev-parse', 'main']);
     const sandbox = shopSandbox();
     const model = scriptedInference([reproduce, fix]);
+    // The local publisher, recording what it was asked to publish.
+    const local = createLocalPublisher({
+      hubRepoDir: hub.repoDir,
+      scratchDir: join(base, 'tasks'),
+    });
+    const published: PublishInput[] = [];
+    const publisher: Publisher = {
+      publish: (input) => {
+        published.push(input);
+        return local.publish(input);
+      },
+    };
 
     const out = await runTask({
       hub,
       input: INC_1042,
       sandbox,
       inference: model,
+      publisher,
     });
 
     expect(out.status).toBe('pr_opened');
+    // The receipt is the pull request: a sanitised title, and a body that
+    // cites the decision, shows the curve and fences the report.
+    expect(published).toHaveLength(1);
+    const { title, body } = published[0]!;
+    expect(title).toBe('[support] INC-1042: Discount code says invalid');
+    expect(body).toContain('D-014');
+    expect(body).toContain('0 → 1 → 0');
+    const report = body.slice(
+      body.indexOf('## Customer report (untrusted, verbatim)')
+    );
+    expect(report).toContain(`\n\`\`\`\n${INC_1042.text}\n\`\`\`\n`);
+    expect(report).toContain(fix.reasoning);
+    expect(body).toContain(`\`${REPRO_TEST}\``);
     expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
     // The pull request comes first, then the status that says so.
     expect(out.events.at(-2)).toEqual({

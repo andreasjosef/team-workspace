@@ -18,7 +18,7 @@ import {
   type Edit,
   type Inference,
 } from '@app/agent';
-import { fail, ok, type Result } from '@app/shared';
+import { fail, ok, type Result, type TaskEvent } from '@app/shared';
 import {
   CONTAINER_WORKDIR,
   scanInstallScripts,
@@ -40,6 +40,7 @@ import {
   removeScratch,
 } from './depsCache.ts';
 import type { HubSync } from './hubSync.ts';
+import { buildPrBody } from './prBody.ts';
 import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 import {
@@ -84,6 +85,9 @@ export type PipelineDeps = {
   sync: HubSync;
   // Opens a green task's pull request.
   publisher: Publisher;
+  // The task's page in the hub, linked from the pull request for what its
+  // body leaves out.
+  receiptUrl?: (taskId: string) => string;
 };
 
 const MAX_REFUSALS = 3;
@@ -103,7 +107,15 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
 });
 
 const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
-  const { id, input, emit, setDiff } = task;
+  const { id, input, setDiff } = task;
+  // Kept for the receipt (the pull request's body), which is built from
+  // the stream, as the snapshot is.
+  const events: TaskEvent[] = [];
+  const emit = (event: TaskEvent) => {
+    events.push(event);
+    task.emit(event);
+  };
+  const reasoning: string[] = [];
   const text = `${input.title}\n${input.text}`;
 
   const run = async (
@@ -368,7 +380,11 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           ...(reproduction ? { reproduction } : {}),
         })
       );
-      return reply.success ? parseEditsResponse(reply.value) : reply;
+      if (!reply.success) return reply;
+      const answer = parseEditsResponse(reply.value);
+      if (answer.success && answer.value.reasoning)
+        reasoning.push(answer.value.reasoning);
+      return answer;
     },
     // The loop runs this on every answer, before a bug's step rule; apply
     // runs it again before writing. An answer that passed once passes again,
@@ -425,11 +441,21 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
+  const receipt = buildPrBody({
+    input,
+    branch: task.branch,
+    baseSha,
+    events,
+    files: [...touched].sort(),
+    reasoning,
+    receiptUrl: deps.receiptUrl?.(id) ?? null,
+  });
   await publish(
     deps,
     { ...task, policy, rolePrompt: role.prompt },
     baseSha,
-    diff
+    diff,
+    receipt
   );
 };
 
@@ -441,7 +467,9 @@ const publish = async (
   deps: PipelineDeps,
   { input, policy, branch, emit }: TaskHandle,
   baseSha: string,
-  diff: string
+  diff: string,
+  // The receipt: the pull request's title and body (prBody.ts).
+  receipt: { title: string; body: string }
 ) => {
   emit({ type: 'phase', phase: 'publish' });
   const problem = checkPatch(policy, diff);
@@ -453,14 +481,12 @@ const publish = async (
     });
     return;
   }
-  // Placeholders until the receipt builder writes the title and body. The
-  // task text stays out of both: it's untrusted.
   const published = await deps.publisher.publish({
     branch,
     baseSha,
     patch: diff,
-    title: `[support] ${input.incidentId ?? 'Report'}: fix from the hub`,
-    body: `Opened by the hub for ${input.incidentId ?? 'a forwarded report'}. Checks pass in the sandbox; the receipt is in the hub.`,
+    title: receipt.title,
+    body: receipt.body,
     draft: false,
     message: commitMessage(input),
   });
