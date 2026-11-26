@@ -41,6 +41,7 @@ import {
   type DeniedLogFetch,
   type SandboxRunner,
 } from './pipeline.ts';
+import { createHubSync, type HubSync } from './hubSync.ts';
 import { createLocalPublisher, type Publisher } from './publisher.ts';
 import { git } from './workspace.ts';
 
@@ -243,6 +244,8 @@ type PipelineFakes = {
   denied?: ReturnType<typeof fakeDenied>;
   inference: ReturnType<typeof scriptedInference>;
   publisher?: Publisher;
+  // One per pipeline unless passed: share one to run tasks under one lock.
+  sync?: HubSync;
 };
 
 const fakePipeline = (opts: PipelineFakes) =>
@@ -256,6 +259,7 @@ const fakePipeline = (opts: PipelineFakes) =>
     depsCacheDir: join(base, 'deps'),
     egressAdminUrl: 'http://egress.invalid:8081',
     keepWorkspaces: false,
+    sync: opts.sync ?? createHubSync(opts.hub),
     publisher:
       opts.publisher ??
       createLocalPublisher({
@@ -477,7 +481,6 @@ describe('pipeline', () => {
       sandbox: shopSandbox(),
       inference: scriptedInference([reproduce, fix]),
       publisher: {
-        sync: async () => ({ baseSha: 'abc123', fetched: false }),
         publish: async () => fail('unavailable', 'GitHub said no'),
       },
     });
@@ -1071,6 +1074,194 @@ const cacheContents = async () =>
   (await readdir(join(base, 'deps')).catch(() => [] as string[])).sort();
 
 const mountsOf = (call: SandboxCall) => call.options.extraMounts ?? [];
+
+// ---- Origin: the hub repo following a bare repo standing in for GitHub ---
+
+// Local paths are the file protocol, which the hub's git refuses by default;
+// these test repos are ours.
+const FILE_OK = ['-c', 'protocol.file.allow=always'];
+const AS_DEV = ['-c', 'user.name=dev', '-c', 'user.email=dev@example.invalid'];
+
+// Gives `hub` an origin: a bare clone of it, plus a developer's clone that
+// pushes to it. `push` commits `files` on origin's main and returns the SHA.
+const withOrigin = async (hub: Hub) => {
+  const origin = join(base, 'origin.git');
+  const dev = join(base, 'dev');
+  const run = async (args: string[], cwd = '/') => {
+    const r = await git([...FILE_OK, ...AS_DEV, ...args], { cwd });
+    expect(r.code, r.out).toBe(0);
+    return r.out.trim();
+  };
+  const inDev = [`--git-dir=${join(dev, '.git')}`, `--work-tree=${dev}`];
+  await run(['clone', '-q', '--bare', '--', hub.repoDir, origin]);
+  await run(['clone', '-q', '--', origin, dev]);
+  await run(
+    [
+      `--git-dir=${join(hub.repoDir, '.git')}`,
+      'remote',
+      'add',
+      'origin',
+      origin,
+    ],
+    hub.repoDir
+  );
+  return {
+    push: async (files: Record<string, string>) => {
+      for (const [path, content] of Object.entries(files)) {
+        await mkdir(dirname(join(dev, path)), { recursive: true });
+        await writeFile(join(dev, path), content);
+      }
+      await run([...inDev, 'add', '.'], dev);
+      await run([...inDev, 'commit', '-q', '-m', 'merged on GitHub'], dev);
+      await run([...inDev, 'push', '-q', 'origin', 'main'], dev);
+      return run([...inDev, 'rev-parse', 'HEAD'], dev);
+    },
+  };
+};
+
+const D_030 =
+  "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
+
+describe('sync from origin', () => {
+  it('a change merged on origin between two tasks shows up in the second task, without rebuilding the hub', async () => {
+    const hub = await makeHub();
+    const startSha = await hubGit(hub, ['rev-parse', 'main']);
+    const origin = await withOrigin(hub);
+
+    const first = await runTask({
+      hub,
+      id: 't1',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+    });
+    expect(first.status).toBe('pr_opened');
+    expect(first.events).toContainEqual({ type: 'base', sha: startSha });
+    expect(first.events).toContainEqual(
+      expect.objectContaining({
+        type: 'context',
+        decisions: [expect.objectContaining({ id: 'D-014' })],
+      })
+    );
+
+    const merged = await origin.push({
+      'decisions/D-030-trim-codes.md': D_030,
+      '.hub/prompts/cs.md':
+        'You are support. A developer merged this prompt.\n',
+    });
+    const model = scriptedInference([reproduce, fix]);
+    const second = await runTask({
+      hub,
+      id: 't2',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(second.status).toBe('pr_opened');
+    expect(second.events).toContainEqual({ type: 'base', sha: merged });
+    const context = second.events.find((e) => e.type === 'context');
+    expect(
+      context?.type === 'context' && context.decisions.map((d) => d.id)
+    ).toContain('D-030');
+    expect(
+      model.calls[0]!.some((m) =>
+        m.content.includes('A developer merged this prompt.')
+      )
+    ).toBe(true);
+    // Each branch starts at the main its task synced.
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t1'])).toBe(
+      startSha
+    );
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t2'])).toBe(
+      merged
+    );
+    // The hub's checkout follows origin; it never commits on main.
+    expect(await hubGit(hub, ['rev-parse', 'main'])).toBe(merged);
+  });
+
+  it('enforces the role policy as merged on origin, not as it was when the task was queued', async () => {
+    const hub = await makeHub();
+    const origin = await withOrigin(hub);
+    const cs = JSON.parse(
+      await readFile(join(hub.repoDir, '.hub/roles/cs.json'), 'utf8')
+    );
+    await origin.push({
+      '.hub/roles/cs.json': JSON.stringify({
+        ...cs,
+        write: { ...cs.write, deny: [...cs.write.deny, 'src/checkout/**'] },
+      }),
+    });
+
+    // runTask hands the pipeline the policy loaded before the sync, as the
+    // queue does.
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce]),
+    });
+
+    expect(out.events).toContainEqual(
+      expect.objectContaining({ type: 'policy_refused', path: REPRO_TEST })
+    );
+    expect(out.status).toBe('flagged');
+    expect(out.pr).toBeUndefined();
+  });
+
+  it('an unreachable origin is logged and the task still runs to its outcome from the last good main', async () => {
+    const hub = await makeHub();
+    const startSha = await hubGit(hub, ['rev-parse', 'main']);
+    await withOrigin(hub);
+    await rm(join(base, 'origin.git'), { recursive: true, force: true });
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.events).toContainEqual({ type: 'base', sha: startSha });
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: expect.stringMatching(
+        /^Fetching origin main failed; starting from the last good main/
+      ),
+    });
+    expect(await hubGit(hub, ['log', '--format=%P', '-1', 'task/t1'])).toBe(
+      startSha
+    );
+  });
+
+  it('two tasks started together through one sync both clone origin main', async () => {
+    const hub = await makeHub();
+    const origin = await withOrigin(hub);
+    const merged = await origin.push({
+      'decisions/D-030-trim-codes.md': D_030,
+    });
+    const sync = createHubSync(hub);
+
+    const [a, b] = await Promise.all(
+      ['a1', 'b2'].map((id) =>
+        runTask({
+          hub,
+          id,
+          sync,
+          input: INC_1042,
+          sandbox: shopSandbox(),
+          inference: scriptedInference([reproduce, fix]),
+        })
+      )
+    );
+
+    for (const out of [a!, b!]) {
+      expect(out.status).toBe('pr_opened');
+      expect(out.events).toContainEqual({ type: 'base', sha: merged });
+    }
+  });
+});
 
 describe('dependency cache', () => {
   it('fills the cache on the first task and mounts it read-only on the next, with no install', async () => {

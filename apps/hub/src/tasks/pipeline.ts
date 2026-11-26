@@ -39,6 +39,7 @@ import {
   readLockfile,
   removeScratch,
 } from './depsCache.ts';
+import type { HubSync } from './hubSync.ts';
 import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 import {
@@ -60,8 +61,9 @@ import {
 // which ran end to end; this one hasn't yet. See README "What's left".
 
 // Every side effect that leaves the host process is a dep: the hub's start-up
-// wiring passes `runInSandbox`, `fetchDenied`, the live inference and the
-// publisher; the pipeline test passes fakes and a local publisher
+// wiring passes `runInSandbox`, `fetchDenied`, the live inference, the sync
+// and the publisher; the pipeline test passes fakes, a local publisher and
+// a hub repo with a local bare repo as its origin
 // (pipeline.test.ts).
 export type SandboxRunner = typeof runInSandbox;
 export type DeniedLogFetch = typeof fetchDenied;
@@ -77,7 +79,10 @@ export type PipelineDeps = {
   depsCacheDir: string;
   egressAdminUrl: string;
   keepWorkspaces: boolean;
-  // Syncs the hub repo before a task, and opens its pull request after.
+  // Brings the hub repo to origin's main and clones it, before each task.
+  // One per hub: its lock spans every task (hubSync.ts).
+  sync: HubSync;
+  // Opens a green task's pull request.
   publisher: Publisher;
 };
 
@@ -98,7 +103,7 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
 });
 
 const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
-  const { id, input, policy, emit, setDiff } = task;
+  const { id, input, emit, setDiff } = task;
   const text = `${input.title}\n${input.text}`;
 
   const run = async (
@@ -126,13 +131,27 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   emit({ type: 'status', status: 'working' });
 
-  // Context: the hub repo brought up to date, a fresh copy of its main, then
-  // what the agent gets to see. The pull request's branch is cut at the
-  // commit synced here, whatever main does meanwhile.
+  // Context: the hub repo brought to origin's main and cloned (one lock over
+  // both), then what the agent gets to see. The pull request's branch is cut
+  // at the commit synced here, whatever main does meanwhile.
   emit({ type: 'phase', phase: 'context' });
-  const { baseSha } = await deps.publisher.sync();
+  const { baseSha } = await deps.sync.sync({
+    log: (message) => emit({ type: 'log', message }),
+    clone: () => branchFromHub(ws, deps.hub.repoDir),
+  });
   emit({ type: 'base', sha: baseSha });
-  await branchFromHub(ws, deps.hub.repoDir);
+  // The role as the synced main defines it: a policy or prompt a developer
+  // merged since the task was queued applies to it.
+  const role = deps.hub.roles.get(input.role);
+  if (!role) {
+    emit({
+      type: 'status',
+      status: 'error',
+      reason: `The synced main has no ${input.role} role`,
+    });
+    return;
+  }
+  const { policy } = role;
   const signals = scanTaskInput(input.text);
   if (signals.length) emit({ type: 'input_flagged', signals });
   const sources: { path: string; content: string }[] = [];
@@ -339,7 +358,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       const reply = await deps.inference.complete(
         buildTaskMessages({
           policy,
-          rolePrompt: task.rolePrompt,
+          rolePrompt: role.prompt,
           task: input,
           decisions,
           files,
@@ -406,7 +425,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
     return;
   }
-  await publish(deps, task, baseSha, diff);
+  await publish(
+    deps,
+    { ...task, policy, rolePrompt: role.prompt },
+    baseSha,
+    diff
+  );
 };
 
 // Green: the checked patch goes out as a pull request. The patch was made

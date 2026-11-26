@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { commitMessage, createLocalPublisher } from './publisher.ts';
-import { git } from './workspace.ts';
+import { git, hubHead } from './workspace.ts';
 
 let base: string;
 let hubRepo: string;
@@ -35,21 +35,9 @@ const localPublisher = () =>
   });
 
 describe('local publisher', () => {
-  it('syncs to the hub repo HEAD without fetching', async () => {
-    const head = await git([
-      `--git-dir=${join(hubRepo, '.git')}`,
-      'rev-parse',
-      'HEAD',
-    ]);
-    expect(await localPublisher().sync()).toEqual({
-      baseSha: head.out.trim(),
-      fetched: false,
-    });
-  });
-
   it('publishes a branch and returns a file:// link, numbering each one', async () => {
     const publisher = localPublisher();
-    const { baseSha } = await publisher.sync();
+    const baseSha = await hubHead(hubRepo);
     const input = {
       baseSha,
       patch,
@@ -69,7 +57,7 @@ describe('local publisher', () => {
 
   it('passes on a branch that could not be published as a failure', async () => {
     const publisher = localPublisher();
-    const { baseSha } = await publisher.sync();
+    const baseSha = await hubHead(hubRepo);
     const out = await publisher.publish({
       baseSha,
       branch: 'task/x',

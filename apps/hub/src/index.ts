@@ -12,6 +12,7 @@ import { loadEnv } from './env.ts';
 import { loadHub } from './hub/load.ts';
 import { createMockRunner } from './tasks/mockRunner.ts';
 import { removeLeftoverScratch } from './tasks/depsCache.ts';
+import { createHubSync } from './tasks/hubSync.ts';
 import { createPipeline } from './tasks/pipeline.ts';
 import { createLocalPublisher } from './tasks/publisher.ts';
 import type { TaskRunner } from './tasks/runner.ts';
@@ -50,6 +51,9 @@ if (env.RUNNER === 'real') {
     depsCacheDir,
     egressAdminUrl: env.EGRESS_ADMIN_URL,
     keepWorkspaces: env.KEEP_WORKSPACES,
+    // One sync for the hub: every task starts from origin's main, if the
+    // hub repo has an origin, under one lock.
+    sync: createHubSync(hub),
     // Local only for now: a branch in the hub repo and a file:// link. The
     // GitHub publisher takes over when GITHUB_REPO is set.
     publisher: createLocalPublisher({

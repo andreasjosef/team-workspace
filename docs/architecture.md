@@ -41,6 +41,7 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 }
 ```
 
+- **Re-read before every task**, after the sync to origin's `main`: a role a developer changed on GitHub applies from the next task on, also to tasks already queued.
 - **Enforced on every proposed edit** by `checkPolicy` (`packages/agent/src/policy.ts`), before anything is written. The prompt explains the scope; this holds the model to it.
 - **Deny wins over allow.** `*` stays in one directory, `**` crosses directories, `dir/**` includes `dir`.
 - **`.hub/` is never agent-writable**, whatever a role file says, so a ticket can't talk an agent into widening its own scope. Policies change only through a dev's own commit.
@@ -51,13 +52,13 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 
 One task is one request from one role, and it ends `pr_opened` (green, a pull request waits for a developer), gave up, flagged, or errored. A task whose text the input scanner flagged never opens a pull request: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
 
-| Phase    | Where   | Network             | What                                                                                                                                                               |
-| -------- | ------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| context  | host    | none                | Clone the hub repo's `main` into the task workspace (separate git dir); scan the task text; rank source files; pick linked decisions                               |
-| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts                                |
-| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug goes reproduce, then fix (below). Halts on 3 refusals or a network attempt                       |
-| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                                           |
-| publish  | host    | GitHub (todo)       | Green only: `checkPatch` again, then the `Publisher` (`publisher.ts`): a fresh worktree on `task/<id>` at the base SHA, `git apply --index` + commit. Never `main` |
+| Phase    | Where   | Network             | What                                                                                                                                                                                                                                                                                                                   |
+| -------- | ------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| context  | host    | GitHub (fetch)      | Sync: fetch origin's `main`, reset the hub checkout to it, reload roles and decisions, clone into the task workspace (separate git dir), all under one lock (`hubSync.ts`); a failed fetch is logged and the task goes on from the last good `main`. Then scan the task text; rank source files; pick linked decisions |
+| baseline | sandbox | registry only       | Install (or mount the cached install of the same lockfile), then typecheck + tests with **no network**; records the starting counts                                                                                                                                                                                    |
+| fix      | sandbox | none                | Propose → role policy → guardrails → apply on host → check. A bug goes reproduce, then fix (below). Halts on 3 refusals or a network attempt                                                                                                                                                                           |
+| preview  | sandbox | none (inbound only) | Not wired yet: see [Previews](#previews)                                                                                                                                                                                                                                                                               |
+| publish  | host    | GitHub (todo)       | Green only: `checkPatch` again, then the `Publisher` (`publisher.ts`): a fresh worktree on `task/<id>` at the base SHA, `git apply --index` + commit. Never `main`                                                                                                                                                     |
 
 ```
 queued → working → pr_opened

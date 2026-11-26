@@ -1,13 +1,13 @@
 import { ok, type CreateTaskInput, type Result } from '@app/shared';
-import { hubHead, publishBranch } from './workspace.ts';
+import { publishBranch } from './workspace.ts';
 
 // How a green task leaves the hub: as a pull request, never a commit on
-// main. The pipeline syncs before a task starts and publishes as its last
-// step; which publisher it gets is the start-up wiring's choice (index.ts).
+// main. Publishing is the pipeline's last step; which publisher it gets is
+// the start-up wiring's choice (index.ts). Both start their tasks from the
+// same sync to origin's main (hubSync.ts), whose `baseSha` they branch from.
 //
 // - Local (`GITHUB_REPO` unset): a branch in the hub repo and a file:// link.
-// - GitHub (a later change): fetch + reset before each task, push the
-//   branch, open the pull request.
+// - GitHub (a later change): push the branch, open the pull request.
 //
 // The pipeline runs `checkPatch` before `publish`, whichever publisher it is.
 export type PublishInput = {
@@ -25,9 +25,6 @@ export type PublishInput = {
 };
 
 export type Publisher = {
-  // Brings the hub repo up to date and says which commit tasks start from.
-  // `fetched` is false when nothing was fetched (local, or a failed fetch).
-  sync: () => Promise<{ baseSha: string; fetched: boolean }>;
   publish: (
     input: PublishInput
   ) => Promise<Result<{ url: string; number: number }>>;
@@ -42,10 +39,6 @@ export const createLocalPublisher = (opts: {
 }): Publisher => {
   let opened = 0;
   return {
-    sync: async () => ({
-      baseSha: await hubHead(opts.hubRepoDir),
-      fetched: false,
-    }),
     publish: async (input) => {
       const published = await publishBranch(opts.hubRepoDir, opts.scratchDir, {
         baseSha: input.baseSha,
