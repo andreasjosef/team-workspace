@@ -3,6 +3,7 @@ import { fail, ok, type Result, type RolePolicy } from '@app/shared';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // A task's files on the host: <tasksDir>/<id>/repo is what sandboxes see
 // (mounted at /work); <tasksDir>/<id>/git is the git directory, which no
@@ -30,9 +31,17 @@ const SAFE_GIT = [
 // `cwd` matters: with --work-tree, `git apply` and pathspecs resolve against
 // the current directory, and from the wrong one a patch lands in the hub's own
 // source tree. Every call that touches a work tree runs inside it.
+//
+// `env` adds variables for this one call only (the push's token); the rest
+// of the environment is built from scratch, never `process.env`.
 export const git = (
   args: string[],
-  opts: { input?: string; extra?: string[]; cwd?: string } = {}
+  opts: {
+    input?: string;
+    extra?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+  } = {}
 ) =>
   new Promise<{ code: number; out: string }>((resolve) => {
     const child = spawn('git', [...SAFE_GIT, ...(opts.extra ?? []), ...args], {
@@ -46,6 +55,7 @@ export const git = (
         GIT_AUTHOR_EMAIL: 'hub@localhost',
         GIT_COMMITTER_NAME: 'Team hub',
         GIT_COMMITTER_EMAIL: 'hub@localhost',
+        ...opts.env,
       },
       timeout: 60_000,
     });
@@ -239,6 +249,46 @@ export const publishBranch = async (
     await unpublish(hubRepoDir, dir, input.branch, '');
     throw err;
   }
+};
+
+const ASKPASS = fileURLToPath(new URL('./git-askpass.sh', import.meta.url));
+
+// Pushes a published branch to the hub repo's origin (GitHub). The token
+// reaches only this git process: GIT_ASKPASS is a script in this repo that
+// prints HUB_PUSH_TOKEN when git asks for a password. No credential helper
+// runs (one could store the token), and no system config is read. The
+// origin URL comes from the hub's own config, which the operator writes, so
+// this call allows the file protocol (a local bare repo in tests).
+export const pushBranch = async (
+  hubRepoDir: string,
+  branch: string,
+  token: string
+): Promise<Result<null>> => {
+  const pushed = await git(
+    [
+      ...inHub(hubRepoDir),
+      'push',
+      '--quiet',
+      '--no-verify',
+      'origin',
+      `refs/heads/${branch}:refs/heads/${branch}`,
+    ],
+    {
+      cwd: hubRepoDir,
+      extra: ['-c', 'protocol.file.allow=always', '-c', 'credential.helper='],
+      env: {
+        GIT_ASKPASS: ASKPASS,
+        HUB_PUSH_TOKEN: token,
+        GIT_CONFIG_NOSYSTEM: '1',
+      },
+    }
+  );
+  if (pushed.code !== 0)
+    return fail(
+      'unavailable',
+      `git push failed: ${pushed.out.trim().slice(-300)}`
+    );
+  return ok(null);
 };
 
 const removeWorktree = async (hubRepoDir: string, dir: string) => {

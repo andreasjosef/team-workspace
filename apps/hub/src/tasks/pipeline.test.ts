@@ -42,7 +42,11 @@ import {
   type SandboxRunner,
 } from './pipeline.ts';
 import { createHubSync, type HubSync } from './hubSync.ts';
-import { createLocalPublisher, type Publisher } from './publisher.ts';
+import {
+  createGitHubPublisher,
+  createLocalPublisher,
+  type Publisher,
+} from './publisher.ts';
 import { git } from './workspace.ts';
 
 // The real pipeline from forward to outcome, without a VM: a throwaway hub
@@ -246,6 +250,8 @@ type PipelineFakes = {
   publisher?: Publisher;
   // One per pipeline unless passed: share one to run tasks under one lock.
   sync?: HubSync;
+  // Keep the task workspace, to inspect it after the run.
+  keepWorkspaces?: boolean;
 };
 
 const fakePipeline = (opts: PipelineFakes) =>
@@ -258,7 +264,7 @@ const fakePipeline = (opts: PipelineFakes) =>
     tasksDir: join(base, 'tasks'),
     depsCacheDir: join(base, 'deps'),
     egressAdminUrl: 'http://egress.invalid:8081',
-    keepWorkspaces: false,
+    keepWorkspaces: opts.keepWorkspaces ?? false,
     sync: opts.sync ?? createHubSync(opts.hub),
     publisher:
       opts.publisher ??
@@ -1260,6 +1266,178 @@ describe('sync from origin', () => {
       expect(out.status).toBe('pr_opened');
       expect(out.events).toContainEqual({ type: 'base', sha: merged });
     }
+  });
+});
+
+// ---- GitHub: the bare origin stands in for the repo, a fake fetch for the API
+
+const GITHUB_TOKEN = 'ghp_pipeline_test_token_0123456789abcdef';
+
+type ApiCall = { url: string; auth: string | null; body: unknown };
+
+// Answers POST /pulls with `pulls` and the labels call with `labels`.
+const fakeGitHubApi = (
+  pulls: () => Response = () =>
+    Response.json(
+      { html_url: 'https://github.com/demo/shop/pull/12', number: 12 },
+      { status: 201 }
+    ),
+  labels: () => Response = () => Response.json([], { status: 200 })
+) => {
+  const calls: ApiCall[] = [];
+  const fetch = async (url: string | URL | Request, init?: RequestInit) => {
+    const href = String(url);
+    calls.push({
+      url: href,
+      auth: new Headers(init?.headers).get('authorization'),
+      body: JSON.parse(String(init?.body)),
+    });
+    return href.endsWith('/labels') ? labels() : pulls();
+  };
+  return { fetch: fetch as typeof globalThis.fetch, calls };
+};
+
+const gitHubPublisher = (hub: Hub, fetch: typeof globalThis.fetch) =>
+  createGitHubPublisher({
+    hubRepoDir: hub.repoDir,
+    scratchDir: join(base, 'tasks'),
+    repo: 'demo/shop',
+    token: GITHUB_TOKEN,
+    apiUrl: 'https://api.github.invalid',
+    fetch,
+  });
+
+const inOrigin = async (args: string[]) =>
+  (await git([`--git-dir=${join(base, 'origin.git')}`, ...args])).out.trim();
+
+// Every file under `dir` that holds `needle`.
+const filesHolding = async (dir: string, needle: string) => {
+  const hits: string[] = [];
+  for (const entry of await readdir(dir, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    if ((await readFile(path, 'latin1')).includes(needle)) hits.push(path);
+  }
+  return hits;
+};
+
+describe('GitHub publisher', () => {
+  it('INC-1042: pushes task/<id> to origin and opens the pull request, main untouched', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const mainBefore = await inOrigin(['rev-parse', 'main']);
+    const api = fakeGitHubApi();
+
+    const out = await runTask({
+      hub,
+      id: 'g1',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+      keepWorkspaces: true,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.pr).toEqual({
+      type: 'pr',
+      url: 'https://github.com/demo/shop/pull/12',
+      number: 12,
+      draft: false,
+    });
+    expect(out.reason).toMatch(/#12/);
+    // On origin: the branch, holding the reproduction and the fix on the
+    // base the task started from. Its main is where it was.
+    expect(
+      (await inOrigin(['diff', '--name-only', mainBefore, 'task/g1']))
+        .split('\n')
+        .sort()
+    ).toEqual([REPRO_TEST, 'src/checkout/discount.ts'].sort());
+    expect(await inOrigin(['rev-parse', 'main'])).toBe(mainBefore);
+    // The API got the pull request, with the token as a bearer header.
+    expect(api.calls[0]).toEqual({
+      url: 'https://api.github.invalid/repos/demo/shop/pulls',
+      auth: `Bearer ${GITHUB_TOKEN}`,
+      body: {
+        head: 'task/g1',
+        base: 'main',
+        draft: false,
+        title: expect.stringContaining('INC-1042'),
+        body: expect.any(String),
+      },
+    });
+    expect(api.calls[1]).toMatchObject({
+      url: 'https://api.github.invalid/repos/demo/shop/issues/12/labels',
+      body: { labels: ['from-support', 'INC-1042'] },
+    });
+    // The token is in no file: not the hub repo's config or remote URLs,
+    // not the task workspace (kept for this check), not origin.
+    expect(await hubGit(hub, ['config', '--list', '--local'])).not.toContain(
+      GITHUB_TOKEN
+    );
+    expect(await hubGit(hub, ['remote', '-v'])).not.toContain(GITHUB_TOKEN);
+    expect(await readdir(join(base, 'tasks'))).toContain('g1');
+    expect(await filesHolding(base, GITHUB_TOKEN)).toEqual([]);
+  });
+
+  it('INC-1042: an API error ends the task as an error with a short reason, the branch still pushed', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const api = fakeGitHubApi(() =>
+      Response.json(
+        {
+          message: 'Validation Failed',
+          errors: [
+            { message: 'A pull request already exists for demo:task/g2.' },
+          ],
+        },
+        { status: 422 }
+      )
+    );
+
+    const out = await runTask({
+      hub,
+      id: 'g2',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+    });
+
+    expect(out.status).toBe('error');
+    expect(out.reason).toMatch(
+      /^Publishing failed: GitHub refused the pull request \(422\): A pull request already exists/
+    );
+    expect(out.pr).toBeUndefined();
+    expect(await inOrigin(['rev-parse', '--verify', 'task/g2'])).toMatch(
+      /^[0-9a-f]{40}$/
+    );
+  });
+
+  it('INC-1042: a label failure is logged and the pull request still counts', async () => {
+    const hub = await makeHub();
+    await withOrigin(hub);
+    const api = fakeGitHubApi(undefined, () =>
+      Response.json({ message: 'Server Error' }, { status: 500 })
+    );
+
+    const out = await runTask({
+      hub,
+      id: 'g3',
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix]),
+      publisher: gitHubPublisher(hub, api.fetch),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: expect.stringMatching(/^Labelling pull request #12 failed/),
+    });
   });
 });
 

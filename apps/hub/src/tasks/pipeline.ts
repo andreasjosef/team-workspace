@@ -463,6 +463,9 @@ const publish = async (
     body: `Opened by the hub for ${input.incidentId ?? 'a forwarded report'}. Checks pass in the sandbox; the receipt is in the hub.`,
     draft: false,
     message: commitMessage(input),
+    // The report id is validated by CreateTaskInput.
+    labels: ['from-support', ...(input.incidentId ? [input.incidentId] : [])],
+    log: (message) => emit({ type: 'log', message }),
   });
   if (!published.success) {
     emit({

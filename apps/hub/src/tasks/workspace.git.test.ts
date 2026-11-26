@@ -6,6 +6,8 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,6 +18,7 @@ import {
   git,
   hubHead,
   publishBranch,
+  pushBranch,
   trackedFiles,
 } from './workspace.ts';
 
@@ -144,5 +147,110 @@ describe('task workspace', () => {
     expect(published.success).toBe(false);
     // The branch that was there stays as it was.
     expect(await show(['rev-parse', 'task/t3'])).toBe(baseSha);
+  });
+});
+
+// ---- Push: the branch goes to origin, the token only to that one git ----
+
+const TOKEN = 'ghp_test_token_never_stored_0123456789';
+
+const setOrigin = async (url: string) =>
+  expect(
+    (await git([...inHub(), 'remote', 'add', 'origin', url], { cwd: hubRepo }))
+      .code
+  ).toBe(0);
+
+// Every file under `dir`, read as text: nothing may hold the token.
+const filesHolding = async (dir: string, needle: string) => {
+  const hits: string[] = [];
+  for (const entry of await readdir(dir, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    if ((await readFile(path, 'latin1')).includes(needle)) hits.push(path);
+  }
+  return hits;
+};
+
+describe('push', () => {
+  it('pushes the task branch to a bare origin, leaving its main alone', async () => {
+    const baseSha = await hubHead(hubRepo);
+    const origin = join(base, 'origin.git');
+    expect(
+      (
+        await git(
+          [
+            '-c',
+            'protocol.file.allow=always',
+            'clone',
+            '-q',
+            '--bare',
+            '--',
+            hubRepo,
+            origin,
+          ],
+          {}
+        )
+      ).code
+    ).toBe(0);
+    await setOrigin(origin);
+    expect((await git([...inHub(), 'branch', 'task/p1', baseSha])).code).toBe(
+      0
+    );
+
+    expect(await pushBranch(hubRepo, 'task/p1', TOKEN)).toEqual({
+      success: true,
+      value: null,
+    });
+
+    const inOrigin = [`--git-dir=${origin}`];
+    expect((await git([...inOrigin, 'rev-parse', 'task/p1'])).out.trim()).toBe(
+      baseSha
+    );
+    expect((await git([...inOrigin, 'rev-parse', 'main'])).out.trim()).toBe(
+      baseSha
+    );
+    expect(await filesHolding(base, TOKEN)).toEqual([]);
+  });
+
+  it('fails with git output when there is no origin', async () => {
+    const pushed = await pushBranch(hubRepo, 'task/p2', TOKEN);
+    expect(pushed.success).toBe(false);
+    expect(!pushed.success && pushed.message).toMatch(/git push failed/);
+  });
+
+  it('answers an https origin asking for credentials from the token, and stores it nowhere', async () => {
+    // A server that wants Basic auth for everything: git asks GIT_ASKPASS
+    // for a user name and password and retries with them.
+    const seen: string[] = [];
+    const server = createServer((req, res) => {
+      seen.push(req.headers.authorization ?? '');
+      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="test"' });
+      res.end();
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    try {
+      const { port } = server.address() as AddressInfo;
+      await setOrigin(`http://127.0.0.1:${port}/demo/shop.git`);
+      const baseSha = await hubHead(hubRepo);
+      expect((await git([...inHub(), 'branch', 'task/p3', baseSha])).code).toBe(
+        0
+      );
+
+      const pushed = await pushBranch(hubRepo, 'task/p3', TOKEN);
+
+      expect(pushed.success).toBe(false);
+      const basic = `Basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`;
+      expect(seen).toContain(basic);
+      // Not in the failure, the config, the remote URL, or any file.
+      expect(!pushed.success && pushed.message).not.toContain(TOKEN);
+      expect(await show(['config', '--list', '--local'])).not.toContain(TOKEN);
+      expect(await show(['remote', '-v'])).not.toContain(TOKEN);
+      expect(await filesHolding(base, TOKEN)).toEqual([]);
+    } finally {
+      server.close();
+    }
   });
 });
