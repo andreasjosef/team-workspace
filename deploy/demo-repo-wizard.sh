@@ -343,10 +343,20 @@ else
     open_url "https://github.com/signup"
     pause "Press Enter once $BOT exists"
   fi
-  gh api -X PUT "orgs/$GH_ORG/memberships/$BOT" -f role=member >/dev/null && say "Invited $BOT to $GH_ORG."
+  if ! gh api -X PUT "orgs/$GH_ORG/memberships/$BOT" -f role=member >/dev/null 2>"$WORK/err"; then
+    warn "couldn't invite $BOT: $(head -c 200 "$WORK/err")"
+    say "Inviting needs the admin:org scope on your gh login. Add it, re-run the"
+    say "wizard (it remembers your answers), and drop the scope again after setup:"
+    note "gh auth refresh -h github.com -s admin:org"
+    note "gh auth refresh -h github.com -r admin:org     # afterwards"
+    exit 1
+  fi
+  say "Invited $BOT to $GH_ORG."
   say "Accept the invitation signed in as $BOT (keep using the private window):"
   step "https://github.com/orgs/$GH_ORG/invitation"
   pause "Press Enter once $BOT has accepted"
+  state=$(gh api "orgs/$GH_ORG/memberships/$BOT" -q .state 2>/dev/null || echo none)
+  [[ "$state" == active ]] || { warn "$BOT's membership is '$state', not active: accept the invitation, then re-run"; exit 1; }
 fi
 say ""
 say "Let members' fine-grained tokens reach the org's repos:"
