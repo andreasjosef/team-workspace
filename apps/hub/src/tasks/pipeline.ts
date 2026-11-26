@@ -489,6 +489,9 @@ const publish = async (
     body: receipt.body,
     draft: false,
     message: commitMessage(input),
+    // The report id is validated by CreateTaskInput.
+    labels: ['from-support', ...(input.incidentId ? [input.incidentId] : [])],
+    log: (message) => emit({ type: 'log', message }),
   });
   if (!published.success) {
     emit({

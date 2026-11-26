@@ -56,6 +56,19 @@ describe('buildRunArgs', () => {
     expect(args).not.toContain('--env-file');
   });
 
+  it('never passes the GitHub token on to a sandbox', () => {
+    process.env.GITHUB_TOKEN = 'github-token-must-not-leak';
+    try {
+      for (const network of ['registry', 'none'] as const) {
+        const args = buildRunArgs(config, spec(network), ['env']).join(' ');
+        expect(args).not.toContain('github-token-must-not-leak');
+        expect(args).not.toContain('GITHUB_TOKEN');
+      }
+    } finally {
+      delete process.env.GITHUB_TOKEN;
+    }
+  });
+
   it('adds the gVisor runtime only when configured', () => {
     expect(buildRunArgs(config, spec('none'), ['x'])).not.toContain(
       '--runtime'

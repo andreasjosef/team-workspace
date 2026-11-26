@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// `NAME=` in an env file means unset, not an empty value.
+const unsetIfEmpty = (schema: z.ZodString) =>
+  z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
+
 const EnvSchema = z
   .object({
     NODE_ENV: z
@@ -26,11 +30,29 @@ const EnvSchema = z
     MAX_CONCURRENT_TASKS: z.coerce.number().int().min(1).default(2),
     // Keep task workspaces after the run, for debugging only.
     KEEP_WORKSPACES: z.stringbool().default(false),
+    // The GitHub repo the hub repo is a clone of, as `owner/name`. Set, a
+    // green task is pushed there and opened as a pull request; unset, it
+    // stays a branch in the hub repo (the local publisher).
+    GITHUB_REPO: unsetIfEmpty(
+      z
+        .string()
+        .regex(
+          /^[A-Za-z0-9-]+\/(?!\.\.?$)[A-Za-z0-9._-]+$/,
+          'GITHUB_REPO must be owner/name'
+        )
+    ),
+    // Fine-grained, for that one repo: contents and pull requests.
+    GITHUB_TOKEN: unsetIfEmpty(z.string()),
+    GITHUB_API_URL: z.url().default('https://api.github.com'),
   })
   .refine(
     (e) =>
       e.RUNNER === 'mock' || (e.VULTR_INFERENCE_API_KEY && e.INFERENCE_MODEL),
     'RUNNER=real needs VULTR_INFERENCE_API_KEY and INFERENCE_MODEL'
+  )
+  .refine(
+    (e) => e.RUNNER === 'mock' || !e.GITHUB_REPO || e.GITHUB_TOKEN,
+    'GITHUB_REPO with RUNNER=real needs GITHUB_TOKEN'
   );
 
 export type Env = z.infer<typeof EnvSchema>;
