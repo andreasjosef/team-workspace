@@ -1,6 +1,6 @@
 # Architecture
 
-One Vultr VM. The hub holds the secrets and the product repo's `main`; untrusted code (the product's tests, whatever an agent writes) only ever runs in short-lived sandbox containers that hold no secrets. Untrusted _text_ (customer reports, any task description) only ever reaches a model, never a decision.
+One Vultr VM. The hub holds the secrets and a clone of the product repo, which follows GitHub's `main`; changes reach `main` only through a pull request a developer merges on GitHub. Untrusted code (the product's tests, whatever an agent writes) only ever runs in short-lived sandbox containers that hold no secrets. Untrusted _text_ (customer reports, any task description) only ever reaches a model, never a decision.
 
 ```
                      internet
@@ -10,10 +10,10 @@ One Vultr VM. The hub holds the secrets and the product repo's `main`; untrusted
                 └───────┬────────┘
                         │ 127.0.0.1:3000
  ┌──────────────────────▼──────────────────────────┐
- │ Hub (apps/hub, systemd, user `hub`)             │   holds: VULTR_INFERENCE_API_KEY
+ │ Hub (apps/hub, systemd, user `hub`)             │   holds: VULTR_INFERENCE_API_KEY, GITHUB_TOKEN
  │  roles from .hub/ → task queue → task loop      │──────────▶ Vultr Serverless Inference
- │  green → branch task/<id> → pull request        │
- │  hub repo checkout (trusted) + task worktrees   │
+ │  green → push task/<id> → pull request          │──────────▶ GitHub demo repo (fetch main,
+ │  hub repo checkout (trusted) + task worktrees   │            push task/*, open PR; never merge)
  └───────┬───────────────────────────┬─────────────┘
          │ docker run (per command)  │ GET /denied (127.0.0.1:8081)
  ┌───────▼─────────────┐   ┌─────────▼──────────┐   ┌──────────────┐
@@ -26,7 +26,7 @@ One Vultr VM. The hub holds the secrets and the product repo's `main`; untrusted
 
 ## Roles
 
-A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at start-up (`apps/hub/src/hub/load.ts`), plus a system prompt in `.hub/prompts/`.
+A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at start-up and after every sync (`apps/hub/src/hub/load.ts`), plus a system prompt in `.hub/prompts/`.
 
 ```json
 {
@@ -41,10 +41,10 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 }
 ```
 
-- **Re-read before every task**, after the sync to origin's `main`: a role a developer changed on GitHub applies from the next task on, also to tasks already queued.
+- **Re-read before every task**, after the sync to origin's `main`: a role a developer changed on GitHub applies from the next task on, also to tasks already queued. A merged `main` that doesn't load (a broken role file) is rolled back to the last `main` that did, and the task log says so.
 - **Enforced on every proposed edit** by `checkPolicy` (`packages/agent/src/policy.ts`), before anything is written. The prompt explains the scope; this holds the model to it.
 - **Deny wins over allow.** `*` stays in one directory, `**` crosses directories, `dir/**` includes `dir`.
-- **`.hub/` is never agent-writable**, whatever a role file says, so a ticket can't talk an agent into widening its own scope. Policies change only through a dev's own commit.
+- **`.hub/` is never agent-writable**, whatever a role file says, so a ticket can't talk an agent into widening its own scope. Policies change only through a pull request a developer merges on GitHub.
 - **No approval in the hub:** a green task opens a pull request, and a developer merges it on GitHub. The role file's `approval` field is ignored (spec 5 removes it).
 - **No auth in the demo.** The UI sends the role it's showing. Say so when demoing.
 
@@ -136,20 +136,21 @@ Check on the VM that the host can reach containers on an internal network before
 
 ## Security checklist (handbook `security/approach.md`)
 
-| Question     | Answer                                                                                                                                                                                                                                                                                                                                                              |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Doors        | 443/80 through Caddy (web + `/api`), SSH. The hub, Verdaccio (4873) and the proxy admin port (8081) bind to 127.0.0.1 only. The app is public and unauthenticated: anyone can start tasks and pick any role. Previews, once built, add one public door per task.                                                                                                    |
-| Credentials  | `VULTR_INFERENCE_API_KEY` in `/opt/team-workspace/.env` (mode 600, owner `hub`), from the password manager; revoke after the event. `GITHUB_TOKEN` beside it: fine-grained, the one demo repo, contents and pull requests read/write. It reaches only the push's git process and the API's bearer header: never git config, a remote URL, a workspace or a sandbox. |
-| Blast radius | A sandbox escape lands as the hub's uid, which is in the `docker` group (root-equivalent), on a box with the inference key and the hub repo. gVisor shrinks the escape odds. A bug in the hub API has the same reach. The VM holds nothing else; throw it away after the event.                                                                                     |
-| Abuse        | Public task creation costs tokens and CPU: 5 tasks/min per client, at most 2 running and 10 waiting, 6 iterations per task. Anyone can approve as "dev" without auth: the demo repo is disposable, never point the hub at a real one without adding auth.                                                                                                           |
-| Detection    | systemd journal for the hub, `docker compose logs egress-proxy` for refused requests, the task event streams. Someone watches during the demo.                                                                                                                                                                                                                      |
-| Recovery     | Tasks are in memory. The hub repo is a git repo: reset it to the demo commit. Rebuild = new VM + `deploy/setup-vm.sh` + `docs/deploying.md`.                                                                                                                                                                                                                        |
+| Question     | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Doors        | 443/80 through Caddy (web + `/api`), SSH. The hub, Verdaccio (4873) and the proxy admin port (8081) bind to 127.0.0.1 only. The app is public and unauthenticated: anyone can start tasks and pick any role. Previews, once built, add one public door per task.                                                                                                                                                                                                                                                                                                                           |
+| Credentials  | `VULTR_INFERENCE_API_KEY` and `GITHUB_TOKEN` in `/opt/team-workspace/.env` (mode 600, owner `hub`), from the password manager; revoke both after the event. The GitHub token is fine-grained, for the one demo repo: Contents and Pull requests read/write, Metadata read (Issues read/write only if labels should stick), with an expiry. It reaches only the push's git process (`GIT_ASKPASS`, that one process's env) and the API's bearer header: never git config, a remote URL, a workspace or a sandbox. The fetch of a public demo repo needs no token                            |
+| Blast radius | A sandbox escape lands as the hub's uid, which is in the `docker` group (root-equivalent), on a box with the inference key, the GitHub token and the hub repo. gVisor shrinks the escape odds. A bug in the hub API has the same reach. On GitHub, the token can push branches and open, label and close pull requests on the demo repo, nothing more: the ruleset on `main` (pull request with 1 approving review, no force push, no deletion, empty bypass list) refuses a push to `main` and a merge, whoever holds the token. The VM holds nothing else; throw it away after the event |
+| Abuse        | Public task creation costs tokens and CPU: 5 tasks/min per client, at most 2 running and 10 waiting, 6 iterations per task. Every green task opens a pull request, so a flood shows up as noise on the demo repo, never as a change to `main`: the demo repo is disposable, and the hub needs auth before it points at a real one                                                                                                                                                                                                                                                          |
+| Detection    | systemd journal for the hub, `docker compose logs egress-proxy` for refused requests, the task event streams. Someone watches during the demo.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Recovery     | Tasks are in memory: restart the hub. `deploy/reset-demo.sh` closes the hub's open pull requests and deletes the `task/*` branches on GitHub; `main` only changes through a merged pull request, so a bad merge is reverted with another one, never a force push. A leaked token: revoke it on GitHub and put a new one in `.env`. Rebuild = new VM + `deploy/setup-vm.sh` + `docs/deploying.md`                                                                                                                                                                                           |
 
 ## Known gaps
 
-- **No auth.** Roles are picked in the UI. The approval check is real, the identity behind it isn't.
-- **Path scopes are coarse.** They limit where code changes, not what it does: a CS edit in `src/checkout/` can still call billing code. The human approval is the gate for behaviour.
+- **No auth.** Roles are picked in the UI, so anyone can start a task as any role. The scope check is real, the identity behind it isn't. What reaches `main` doesn't depend on it: GitHub's ruleset and a developer's review do.
+- **Path scopes are coarse.** They limit where code changes, not what it does: a CS edit in `src/checkout/` can still call billing code. The developer's review of the pull request is the gate for behaviour.
 - **The input scanner is a heuristic.** It's there to warn the reviewer, not to stop anything.
-- **Prod runs approved code** with whatever secrets prod needs. Past approval, the sandbox no longer protects anything.
-- **Concurrent approvals:** two tasks touching the same file; the second `git apply` fails and the task errors. No rebase yet.
+- **Prod runs merged code** with whatever secrets prod needs. Past the merge, the sandbox no longer protects anything.
+- **Overlapping pull requests:** two tasks touching the same file open two pull requests from the same base; the second may conflict once the first is merged. A developer resolves it on GitHub; the hub doesn't rebase.
+- **`origin` and `GITHUB_REPO` aren't checked against each other.** The push goes to the hub repo's `origin`, the pull request to `GITHUB_REPO`; set them to the same repo (`docs/deploying.md`).
 - **Denied-request attribution is by time window** (from the upgrade agent): with two tasks installing at once, a refused request could show on the wrong task.
