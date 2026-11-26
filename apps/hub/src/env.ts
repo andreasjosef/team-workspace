@@ -1,8 +1,10 @@
 import { z } from 'zod';
 
 // `NAME=` in an env file means unset, not an empty value.
-const unsetIfEmpty = (schema: z.ZodString) =>
+const unsetIfEmpty = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
+
+export type GitHubRepo = { owner: string; name: string };
 
 const EnvSchema = z
   .object({
@@ -40,6 +42,11 @@ const EnvSchema = z
           /^[A-Za-z0-9-]+\/(?!\.\.?$)[A-Za-z0-9._-]+$/,
           'GITHUB_REPO must be owner/name'
         )
+        // Parsed once here: the regex allows exactly one `/`.
+        .transform((repo): GitHubRepo => {
+          const slash = repo.indexOf('/');
+          return { owner: repo.slice(0, slash), name: repo.slice(slash + 1) };
+        })
     ),
     // Fine-grained, for that one repo: contents and pull requests.
     GITHUB_TOKEN: unsetIfEmpty(z.string()),
@@ -53,7 +60,16 @@ const EnvSchema = z
   .refine(
     (e) => e.RUNNER === 'mock' || !e.GITHUB_REPO || e.GITHUB_TOKEN,
     'GITHUB_REPO with RUNNER=real needs GITHUB_TOKEN'
-  );
+  )
+  // Repo and token together, so a caller narrows once instead of asserting
+  // the token: set when both are (always, with GITHUB_REPO and RUNNER=real).
+  .transform((e) => ({
+    ...e,
+    github:
+      e.GITHUB_REPO && e.GITHUB_TOKEN
+        ? { repo: e.GITHUB_REPO, token: e.GITHUB_TOKEN }
+        : undefined,
+  }));
 
 export type Env = z.infer<typeof EnvSchema>;
 

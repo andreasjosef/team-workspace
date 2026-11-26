@@ -51,9 +51,9 @@ The product lives in its own GitHub repo, the **demo repo**: `demo/shop` with it
 
 ### Demo repo setup (once, by hand, from your laptop)
 
-Use a separate bot GitHub account as the token's owner if you can, with write access to the demo repo only: then "the hub can't merge" holds whoever set it up. A public repo is simplest: the fetch needs no token, and the judges can open the pull request.
+Use a separate bot GitHub account as the token's owner if you can, with write access to the demo repo only: then "the hub can't merge" holds whoever set it up. **The demo repo must be public:** the hub fetches its `main` without a token, so a private demo repo fails every fetch and each task starts from the last local `main`. Public also lets the judges open the pull request.
 
-1. **Create the repo from `demo/shop` and tag `demo-start`:**
+1. **Create the repo, public, from `demo/shop` and tag `demo-start`:**
 
    ```sh
    cp -r demo/shop /tmp/demo-shop && cd /tmp/demo-shop
@@ -85,7 +85,7 @@ Use a separate bot GitHub account as the token's owner if you can, with write ac
    gh label create from-support --repo <owner>/<name> --color 0e8a16 --description "Opened by the hub from a support report"
    ```
 
-4. **A fine-grained token** (GitHub → Settings → Developer settings → Fine-grained tokens), signed in as the token's owner. Repository access: only the demo repo. Permissions: Contents read and write, Pull requests read and write, Metadata read. Nothing else. Expiry: the day after the event. Save it in the team's password manager. Adding labels may also need Issues read and write: without it, the task log says "Labelling pull request #N failed: … 403" and the pull request stays open without labels. Add Issues if you want the labels; nothing else needs it.
+4. **A fine-grained token** (GitHub → Settings → Developer settings → Fine-grained tokens), signed in as the token's owner. Repository access: only the demo repo. Permissions: Contents read and write, Pull requests read and write, Metadata read. Nothing else. Expiry: the day after the event. Save it in the team's password manager. Pull requests write covers the labels too. If labelling fails anyway, the task log says "Labelling pull request #N failed: …" and the pull request stays open without labels; nothing else depends on them.
 
 5. **Clone the demo repo as the hub repo on the VM**, over https, with no credentials in the URL. The directory exists and is empty after `setup-vm.sh`:
 

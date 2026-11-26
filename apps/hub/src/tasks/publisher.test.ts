@@ -170,7 +170,7 @@ describe('GitHub publisher', () => {
     createGitHubPublisher({
       hubRepoDir: hubRepo,
       scratchDir: join(base, 'tasks'),
-      repo: 'demo/shop',
+      repo: { owner: 'demo', name: 'shop' },
       token: TOKEN,
       apiUrl: 'https://api.github.invalid/',
       fetch,

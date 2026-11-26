@@ -171,7 +171,31 @@ export const checkPatch = (
   return null;
 };
 
-const inHub = (hubRepoDir: string) => [`--git-dir=${join(hubRepoDir, '.git')}`];
+// Every host-side git call on the hub repo names its git dir this way.
+export const inHub = (hubRepoDir: string) => [
+  `--git-dir=${join(hubRepoDir, '.git')}`,
+];
+
+// One plain line: control characters and line breaks become spaces (so the
+// text can't add a commit trailer or a fake log line), capped at `max`.
+export const oneLine = (text: string, max = Infinity) => {
+  const line = text
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};
+
+// `scheme://user:secret@host` -> `scheme://***@host`.
+const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi;
+
+// Git's output as it may appear in a task reason or log: credentials in URLs
+// redacted, one line, its last `max` characters (git ends with the error).
+export const gitDetail = (out: string, max = 300) => {
+  const line = oneLine(out.replace(URL_CREDENTIALS, '$1***@'));
+  return line.length > max ? `…${line.slice(-(max - 1))}` : line;
+};
 
 // The commit the hub repo's checkout is at: the base a task starts from.
 export const hubHead = async (hubRepoDir: string) => {
@@ -284,10 +308,7 @@ export const pushBranch = async (
     }
   );
   if (pushed.code !== 0)
-    return fail(
-      'unavailable',
-      `git push failed: ${pushed.out.trim().slice(-300)}`
-    );
+    return fail('unavailable', `git push failed: ${gitDetail(pushed.out)}`);
   return ok(null);
 };
 

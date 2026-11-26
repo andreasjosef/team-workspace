@@ -1,6 +1,7 @@
 import { fail, ok, type CreateTaskInput, type Result } from '@app/shared';
 import { z } from 'zod';
-import { publishBranch, pushBranch } from './workspace.ts';
+import type { GitHubRepo } from '../env.ts';
+import { oneLine, publishBranch, pushBranch } from './workspace.ts';
 
 // How a green task leaves the hub: as a pull request, never a commit on
 // main. Publishing is the pipeline's last step; which publisher it gets is
@@ -73,14 +74,14 @@ export const createLocalPublisher = (opts: {
 export const createGitHubPublisher = (opts: {
   hubRepoDir: string;
   scratchDir: string;
-  // `owner/name`, validated by the env schema.
-  repo: string;
+  // Parsed from GITHUB_REPO by the env schema.
+  repo: GitHubRepo;
   token: string;
   apiUrl: string;
   fetch?: typeof globalThis.fetch;
 }): Publisher => {
   const fetch = opts.fetch ?? globalThis.fetch;
-  const [owner = '', name = ''] = opts.repo.split('/');
+  const { owner, name } = opts.repo;
   const repoUrl = `${opts.apiUrl.replace(/\/+$/, '')}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
   const post = (path: string, body: unknown) =>
     fetch(`${repoUrl}${path}`, {
@@ -190,7 +191,7 @@ const apiError = (res: Response, answer: unknown) => {
   const said = body.success
     ? (body.data.errors?.find((e) => e.message)?.message ?? body.data.message)
     : undefined;
-  const detail = said ? `: ${oneLine(said)}` : '';
+  const detail = said ? `: ${oneLine(said, MAX_DETAIL)}` : '';
   const status = res.status;
   if (status === 401) return `GitHub rejected the token (401)${detail}`;
   if (
@@ -203,18 +204,9 @@ const apiError = (res: Response, answer: unknown) => {
 };
 
 const errorText = (err: unknown) =>
-  oneLine(err instanceof Error ? err.message : String(err));
+  oneLine(err instanceof Error ? err.message : String(err), MAX_DETAIL);
 
 const MAX_DETAIL = 160;
-
-const oneLine = (text: string) => {
-  const line = text
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return line.length > MAX_DETAIL ? `${line.slice(0, MAX_DETAIL - 1)}…` : line;
-};
 
 const MAX_SUBJECT = 72;
 
@@ -225,12 +217,6 @@ const MAX_SUBJECT = 72;
 export const commitMessage = (
   input: Pick<CreateTaskInput, 'title' | 'incidentId'>
 ) => {
-  const title = input.title
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const capped =
-    title.length > MAX_SUBJECT ? `${title.slice(0, MAX_SUBJECT - 1)}…` : title;
+  const capped = oneLine(input.title, MAX_SUBJECT);
   return `fix: ${capped}${input.incidentId ? ` (${input.incidentId})` : ''}`;
 };

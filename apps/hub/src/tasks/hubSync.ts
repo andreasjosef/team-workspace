@@ -1,5 +1,5 @@
 import { reloadHub, type Hub } from '../hub/load.ts';
-import { git, hubHead } from './workspace.ts';
+import { git, gitDetail, hubHead, inHub } from './workspace.ts';
 
 // Each task starts from origin's current main (GitHub's, on the VM): a change
 // a developer merged shows up in the next task's context and policies,
@@ -30,16 +30,15 @@ export type HubSync = {
 
 const ORIGIN_MAIN = 'refs/remotes/origin/main';
 const short = (sha: string) => sha.slice(0, 12);
-const tail = (s: string) => s.trim().split('\n').slice(-3).join(' ');
 
 export const createHubSync = (hub: Hub): HubSync => {
-  const gitDir = `--git-dir=${hub.repoDir}/.git`;
-  const inCheckout = [gitDir, `--work-tree=${hub.repoDir}`];
+  const gitDir = inHub(hub.repoDir);
+  const inCheckout = [...gitDir, `--work-tree=${hub.repoDir}`];
   const hubGit = (args: string[], extra: string[] = []) =>
     git(args, { cwd: hub.repoDir, extra });
 
   const hasOrigin = async () =>
-    (await hubGit([gitDir, 'remote', 'get-url', 'origin'])).code === 0;
+    (await hubGit([...gitDir, 'remote', 'get-url', 'origin'])).code === 0;
 
   // The origin URL comes from the hub repo's own config, which only the
   // operator writes, so this one call allows the file protocol (a local
@@ -47,7 +46,7 @@ export const createHubSync = (hub: Hub): HubSync => {
   const fetchMain = () =>
     hubGit(
       [
-        gitDir,
+        ...gitDir,
         'fetch',
         '--quiet',
         '--no-tags',
@@ -60,7 +59,7 @@ export const createHubSync = (hub: Hub): HubSync => {
 
   const resetTo = async (sha: string) => {
     const r = await hubGit([...inCheckout, 'reset', '--quiet', '--hard', sha]);
-    if (r.code !== 0) throw new Error(`git reset failed: ${r.out.slice(-500)}`);
+    if (r.code !== 0) throw new Error(`git reset failed: ${gitDetail(r.out)}`);
   };
 
   const syncOnce: HubSync['sync'] = async ({ log, clone }) => {
@@ -72,13 +71,13 @@ export const createHubSync = (hub: Hub): HubSync => {
     const fetched = await fetchMain();
     if (fetched.code !== 0) {
       log(
-        `Fetching origin main failed; starting from the last good main (${short(before)}): ${tail(fetched.out)}`
+        `Fetching origin main failed; starting from the last good main (${short(before)}): ${gitDetail(fetched.out)}`
       );
       await clone(before);
       return { baseSha: before, fetched: false };
     }
     const sha = (
-      await hubGit([gitDir, 'rev-parse', '--verify', ORIGIN_MAIN])
+      await hubGit([...gitDir, 'rev-parse', '--verify', ORIGIN_MAIN])
     ).out.trim();
     await resetTo(sha);
     try {

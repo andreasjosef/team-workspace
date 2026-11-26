@@ -1328,7 +1328,7 @@ const gitHubPublisher = (hub: Hub, fetch: typeof globalThis.fetch) =>
   createGitHubPublisher({
     hubRepoDir: hub.repoDir,
     scratchDir: join(base, 'tasks'),
-    repo: 'demo/shop',
+    repo: { owner: 'demo', name: 'shop' },
     token: GITHUB_TOKEN,
     apiUrl: 'https://api.github.invalid',
     fetch,

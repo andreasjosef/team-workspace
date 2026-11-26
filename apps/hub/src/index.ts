@@ -59,13 +59,13 @@ if (env.RUNNER === 'real') {
     sync: createHubSync(hub),
     // GITHUB_REPO set: push to origin and open a pull request there.
     // Unset: a branch in the hub repo and a file:// link.
-    publisher: env.GITHUB_REPO
+    // The env schema requires a token with GITHUB_REPO and RUNNER=real.
+    publisher: env.github
       ? createGitHubPublisher({
           hubRepoDir: hub.repoDir,
           scratchDir: tasksDir,
-          repo: env.GITHUB_REPO,
-          // The env schema requires it with GITHUB_REPO and RUNNER=real.
-          token: env.GITHUB_TOKEN!,
+          repo: env.github.repo,
+          token: env.github.token,
           apiUrl: env.GITHUB_API_URL,
         })
       : createLocalPublisher({
@@ -74,8 +74,8 @@ if (env.RUNNER === 'real') {
         }),
   });
   console.log(
-    env.GITHUB_REPO
-      ? `Publishing pull requests to ${env.GITHUB_REPO}`
+    env.github
+      ? `Publishing pull requests to ${env.github.repo.owner}/${env.github.repo.name}`
       : 'Publishing branches in the hub repo (GITHUB_REPO unset)'
   );
 } else {

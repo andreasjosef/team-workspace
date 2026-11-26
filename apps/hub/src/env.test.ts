@@ -30,11 +30,18 @@ describe('env', () => {
       GITHUB_REPO: 'demo/shop',
       GITHUB_TOKEN: 'token',
     });
-    expect(env.GITHUB_REPO).toBe('demo/shop');
+    expect(env.GITHUB_REPO).toEqual({ owner: 'demo', name: 'shop' });
+    expect(env.github).toEqual({
+      repo: { owner: 'demo', name: 'shop' },
+      token: 'token',
+    });
   });
 
   it('does not need a token for the mock runner', () => {
-    expect(loadEnv({ GITHUB_REPO: 'demo/shop' }).GITHUB_REPO).toBe('demo/shop');
+    expect(loadEnv({ GITHUB_REPO: 'demo/shop' }).GITHUB_REPO).toEqual({
+      owner: 'demo',
+      name: 'shop',
+    });
   });
 
   it('takes GITHUB_REPO only as owner/name', () => {
