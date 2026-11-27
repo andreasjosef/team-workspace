@@ -2,10 +2,12 @@ import type { TaskSnapshot } from '@app/shared';
 import { describe, expect, it } from 'vitest';
 import {
   fixtureLayers,
+  NETWORK_LAYER,
   outcome,
   progress,
   replyDraftLabel,
   reproduced,
+  taskLayers,
   taskForIncident,
   timeAgo,
 } from './taskView.ts';
@@ -132,7 +134,7 @@ describe('fixture run', () => {
       ['Input scanner', 'flagged'],
       ['Role policy', 'refused'],
       ['.hub/ lock', 'refused'],
-      ['Sandbox network', 'blocked'],
+      [NETWORK_LAYER, 'blocked'],
     ]);
     expect(layers[1]!.detail).toMatch(/^src\/auth\/users\.ts/);
     expect(layers[3]!.detail).toMatch(/collector\.attacker\.example/);
@@ -143,10 +145,10 @@ describe('fixture run', () => {
       ['Input scanner', 'flagged'],
       ['Role policy', 'not reached'],
       ['.hub/ lock', 'not reached'],
-      ['Sandbox network', 'not reached'],
+      [NETWORK_LAYER, 'not reached'],
     ]);
     expect(states(fixture({ status: 'working' })).at(-1)).toEqual([
-      'Sandbox network',
+      NETWORK_LAYER,
       'waiting',
     ]);
     expect(states(null).at(1)).toEqual(['Role policy', 'waiting']);
@@ -158,6 +160,18 @@ describe('fixture run', () => {
       'Fixture: a scripted hostile proposal, not the model'
     );
     expect(o.customer).toBeNull();
+  });
+
+  it("reads a task's own layers: what fired, what didn't", () => {
+    const t = task({
+      refusals: [{ path: 'src/auth/users.ts', rule: 'deny src/auth/**' }],
+    });
+    expect(taskLayers(t).map((l) => [l.name, l.state])).toEqual([
+      ['Input scanner', 'not fired'],
+      ['Role policy', 'refused'],
+      ['.hub/ lock', 'not fired'],
+      [NETWORK_LAYER, 'not fired'],
+    ]);
   });
 });
 

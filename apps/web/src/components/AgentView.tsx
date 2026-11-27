@@ -38,6 +38,38 @@ const Source = ({ task }: { task: TaskSnapshot }) => {
   );
 };
 
+// The context files and decisions at a glance; their text is in the prompt
+// sections below.
+const ContextSummary = ({ task }: { task: TaskSnapshot }) => (
+  <dl className="kv">
+    <dt>Files</dt>
+    <dd>
+      {task.context.files.length ? (
+        task.context.files.map((f) => (
+          <span className="chip" key={f}>
+            {f}
+          </span>
+        ))
+      ) : (
+        <span className="muted">none yet</span>
+      )}
+    </dd>
+    <dt>Decisions</dt>
+    <dd>
+      {task.context.decisions.length ? (
+        task.context.decisions.map((d) => (
+          <div key={d.id}>
+            <span className="chip">{d.id}</span>
+            {d.title}
+          </div>
+        ))
+      ) : (
+        <span className="muted">none matched</span>
+      )}
+    </dd>
+  </dl>
+);
+
 const Section = ({ section }: { section: PromptSection }) => {
   const cut = section.text.length < section.chars;
   const report = section.title === "The customer's report";
@@ -106,6 +138,7 @@ export const AgentView = ({ task }: { task: TaskSnapshot }) => {
     <>
       <Source task={task} />
       <h3 className="agent-heading">What the agent saw</h3>
+      <ContextSummary task={task} />
       {task.prompt ? (
         task.prompt.sections.map((s) => <Section key={s.title} section={s} />)
       ) : (
