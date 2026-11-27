@@ -1920,12 +1920,16 @@ table.iters th {
 .thread-compose {
   align-self: flex-end;
   text-align: right;
+  margin-top: 0.75rem;
 }
 .thread-compose .forward {
   margin: 0;
 }
 .thread-compose .forward p {
-  margin-left: auto;
+  max-width: 26rem;
+  margin: 0.75rem 0 0 auto;
+  line-height: 1.5;
+  text-wrap: balance;
 }
 .linkish {
   border: 0;
