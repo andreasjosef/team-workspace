@@ -2,7 +2,7 @@
 
 **From customer report to reviewed pull request, without a developer reproducing anything, and without trusting the report.** A support rep forwards a customer's report; an agent reproduces it in a throwaway sandbox, checks it against the team's decisions, and either opens a pull request with the fix or stops and says why. The hub drafts a reply the rep can send the customer. The hub never merges: a developer does, in GitHub.
 
-Built for the Vultr Agent Runtime Hackathon. **Overview: [andreasjosef.github.io/team-workspace](https://andreasjosef.github.io/team-workspace/).** **Direction and build specs: [docs/ticket-to-pr](docs/ticket-to-pr/README.md). Vocabulary: [CONTEXT.md](CONTEXT.md).** The sandbox, egress proxy and agent loop come from `safe-upgrade-agent`.
+Built for the Vultr Agent Runtime Hackathon. **Live demo: [65.20.113.177.sslip.io](https://65.20.113.177.sslip.io/).** **Overview: [andreasjosef.github.io/team-workspace](https://andreasjosef.github.io/team-workspace/).** **Direction and build specs: [docs/ticket-to-pr](docs/ticket-to-pr/README.md). Vocabulary: [CONTEXT.md](CONTEXT.md).** The sandbox, egress proxy and agent loop come from `safe-upgrade-agent`.
 
 > **Left over from the first version:** the PO and dev roles, their role files and prompts, and the mock runner's signup-copy scenario. Their views are hidden (the web app only has the support view); spec 5 removes the rest.
 
