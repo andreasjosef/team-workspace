@@ -3,6 +3,7 @@ import {
   buildTaskMessages,
   checkCommand,
   checkPolicy,
+  describeCompletion,
   draftReply,
   filesFromErrors,
   isCreate,
@@ -174,6 +175,21 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   },
 });
 
+// Each answered model call leaves one log line: why the reply ended and what
+// it cost (`finish_reason`, token usage). A failed call needs none of its
+// own: its message (an empty reply's names the finish_reason) reaches the
+// log as a rejected answer or a template fallback.
+const withCallLog = (
+  inference: Inference,
+  log: (message: string) => void
+): Inference => ({
+  complete: async (messages) => {
+    const reply = await inference.complete(messages);
+    if (reply.success) log(describeCompletion(reply.value));
+    return reply;
+  },
+});
+
 // The reply the support rep can send, drafted once the status is final: one
 // more model call for the outcomes a model may describe, the template for
 // the rest and for any draft that fails its rules. It never changes the
@@ -188,8 +204,14 @@ const emitReplyDraft = async (
     fixture?: boolean;
   }
 ) => {
+  // A call that answers after the draft timed out logs nothing: the task's
+  // stream has moved on.
+  let open = true;
+  const inference = withCallLog(deps.inference, (message) => {
+    if (open) emit({ type: 'log', message });
+  });
   const { draft, fallback } = await draftReply(
-    deps.inference,
+    inference,
     {
       ...facts,
       title: input.title,
@@ -197,7 +219,9 @@ const emitReplyDraft = async (
       ...(input.incidentId ? { incidentId: input.incidentId } : {}),
     },
     deps.draftTimeoutMs === undefined ? {} : { timeoutMs: deps.draftTimeoutMs }
-  );
+  ).finally(() => {
+    open = false;
+  });
   if (fallback)
     emit({ type: 'log', message: `Reply draft: the template (${fallback})` });
   emit({ type: 'reply_draft', ...draft });
@@ -216,7 +240,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const text = `${input.title}\n${input.text}`;
   // A fixture run is driven by the scripted hostile proposal, not the model;
   // everything else below is the same pipeline.
-  const inference = task.fixtureOf ? fixtureInference() : deps.inference;
+  const inference = task.fixtureOf
+    ? fixtureInference()
+    : withCallLog(deps.inference, (message) => emit({ type: 'log', message }));
 
   const run = async (
     cmd: string[],
@@ -503,7 +529,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       }
       const reply = await inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
-      const parsed = parseEditsResponse(reply.value);
+      const parsed = parseEditsResponse(reply.value.content);
       if (parsed.success && parsed.value.reasoning)
         reasoning.push(parsed.value.reasoning);
       if (parsed.success)

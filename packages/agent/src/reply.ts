@@ -4,7 +4,7 @@ import {
   type ReplyDraft,
   type Result,
 } from '@app/shared';
-import type { ChatMessage, Inference } from './inference.ts';
+import type { ChatMessage, Completion, Inference } from './inference.ts';
 import { wrapUntrusted } from './inputScan.ts';
 
 // The reply the support rep can send the customer once a task has ended. The
@@ -164,7 +164,7 @@ export const draftReply = async (
 ): Promise<{ draft: ReplyDraft; fallback: string | null }> => {
   const template = templateReply(facts.status);
   if (!wantsModelDraft(facts)) return { draft: template, fallback: null };
-  let reply: Result<string>;
+  let reply: Result<Completion>;
   try {
     reply = await withTimeout(
       inference.complete(buildReplyMessages(facts)),
@@ -174,7 +174,7 @@ export const draftReply = async (
     reply = fail('unavailable', String(err));
   }
   if (!reply.success) return { draft: template, fallback: reply.message };
-  const text = reply.value.trim();
+  const text = reply.value.content.trim();
   const problems = checkReplyDraft(text, {
     fixAwaitingReview: facts.status === 'pr_opened',
   });

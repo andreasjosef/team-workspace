@@ -133,9 +133,12 @@ const facts = (patch: Partial<ReplyFacts> = {}): ReplyFacts => ({
 const model = (reply: () => Promise<Result<string>>) => {
   const calls: ChatMessage[][] = [];
   const inference: Inference = {
-    complete: (messages) => {
+    complete: async (messages) => {
       calls.push(messages);
-      return reply();
+      const r = await reply();
+      return r.success
+        ? ok({ content: r.value, finishReason: 'stop', usage: null })
+        : r;
     },
   };
   return { inference, calls };

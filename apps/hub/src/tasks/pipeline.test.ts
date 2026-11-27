@@ -228,6 +228,20 @@ const CLEAN_DRAFT =
 const isDraftCall = (messages: ChatMessage[]) =>
   messages[0]?.content.startsWith('Write the reply') ?? false;
 
+// What each scripted fix-loop reply reports it cost.
+const SCRIPTED_USAGE = {
+  promptTokens: 1500,
+  completionTokens: 90,
+  totalTokens: 1590,
+};
+const SCRIPTED_CALL_LOG =
+  'Model call: finish_reason stop, tokens 1500 prompt, 90 completion, 1590 total';
+// The reply draft's call reports no usage.
+const DRAFT_CALL_LOG = {
+  type: 'log',
+  message: 'Model call: finish_reason stop, tokens not reported',
+} as const;
+
 // Replies in order; the last one repeats. An object is sent as JSON. The
 // reply draft's call is answered by `draft` and kept apart in `draftCalls`,
 // so `calls` holds only the fix loop's.
@@ -243,11 +257,18 @@ const scriptedInference = (
     complete: async (messages) => {
       if (isDraftCall(messages)) {
         draftCalls.push(messages);
-        return draft();
+        const r = await draft();
+        return r.success
+          ? ok({ content: r.value, finishReason: 'stop', usage: null })
+          : r;
       }
       const reply = replies[Math.min(calls.length, replies.length - 1)]!;
       calls.push(messages);
-      return ok(typeof reply === 'string' ? reply : JSON.stringify(reply));
+      return ok({
+        content: typeof reply === 'string' ? reply : JSON.stringify(reply),
+        finishReason: 'stop',
+        usage: SCRIPTED_USAGE,
+      });
     },
   };
   return { inference, calls, draftCalls };
@@ -489,13 +510,14 @@ describe('pipeline', () => {
     expect(body).toContain(`\`${REPRO_TEST}\``);
     expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
     // The pull request comes first, then the status that says so, then the
-    // reply draft, which the scripted model wrote within the rules.
+    // draft call's log line and the reply draft, which the scripted model
+    // wrote within the rules.
     expect(out.events.at(-1)).toEqual({
       type: 'reply_draft',
       text: CLEAN_DRAFT,
       source: 'model',
     });
-    expect(out.events.at(-3)).toEqual({
+    expect(out.events.at(-4)).toEqual({
       type: 'pr',
       url: `file://${hub.repoDir}#task/t1`,
       number: 1,
@@ -755,6 +777,64 @@ describe('pipeline', () => {
     // Install, then one check: one sandbox run.
     expect(beforeModel?.[0]).toBe('npm install');
     expect(beforeModel!.slice(1)).toEqual([expect.stringContaining(CHECK)]);
+  });
+
+  it('logs each model call once, with its finish_reason and token usage', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const callLogs = out.events.flatMap((e) =>
+      e.type === 'log' && e.message.startsWith('Model call:') ? [e.message] : []
+    );
+    // Two fix-loop calls, then the reply draft's, which reports no usage.
+    expect(model.calls).toHaveLength(2);
+    expect(model.draftCalls).toHaveLength(1);
+    expect(callLogs).toEqual([
+      SCRIPTED_CALL_LOG,
+      SCRIPTED_CALL_LOG,
+      DRAFT_CALL_LOG.message,
+    ]);
+  });
+
+  it('an empty reply reaches the log with its finish_reason', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+    const complete = model.inference.complete;
+    let first = true;
+    model.inference.complete = async (messages) => {
+      if (first && !isDraftCall(messages)) {
+        first = false;
+        return fail(
+          'unavailable',
+          'Inference returned no content (finish_reason: length)'
+        );
+      }
+      return complete(messages);
+    };
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    expect(logs.some((m) => m.includes('finish_reason: length'))).toBe(true);
+    // The failed call isn't logged as an answered one.
+    expect(logs.filter((m) => m.startsWith('Model call:'))).toHaveLength(
+      model.calls.length + model.draftCalls.length
+    );
   });
 
   it('runs each check as one sandbox call with no network, counting what it printed', async () => {
@@ -1381,8 +1461,9 @@ const withOrigin = async (hub: Hub) => {
 const D_030 =
   "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
 
-// What follows the final status: only the reply draft (and a log line on
-// a fallback). Nothing after it changes the status.
+// What follows the final status: only the reply draft, with the draft
+// call's log line, or a log line on a fallback. Nothing after it changes the
+// status.
 const afterStatus = (events: TaskEvent[]) =>
   events.slice(events.findLastIndex((e) => e.type === 'status') + 1);
 
@@ -1399,6 +1480,7 @@ describe('reply draft', () => {
 
     expect(out.status).toBe('pr_opened');
     expect(afterStatus(out.events)).toEqual([
+      DRAFT_CALL_LOG,
       { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
     ]);
     expect(model.draftCalls).toHaveLength(1);
@@ -1462,7 +1544,8 @@ describe('reply draft', () => {
     });
 
     expect(out.status).toBe('pr_opened');
-    const [log, draft] = afterStatus(out.events);
+    const [callLog, log, draft] = afterStatus(out.events);
+    expect(callLog).toEqual(DRAFT_CALL_LOG);
     expect(log).toMatchObject({
       type: 'log',
       message: expect.stringMatching(/broke the rules.*markdown.*a URL/),
@@ -1508,6 +1591,7 @@ describe('a crashed run', () => {
       reason: 'internal error',
     });
     expect(afterStatus(events)).toEqual([
+      DRAFT_CALL_LOG,
       { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
     ]);
   });

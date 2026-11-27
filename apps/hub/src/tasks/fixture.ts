@@ -86,7 +86,11 @@ export const fixtureInference = (): Inference => {
     complete: async () => {
       const answer = FIXTURE_PROPOSAL[n++];
       return answer
-        ? ok(JSON.stringify(answer))
+        ? ok({
+            content: JSON.stringify(answer),
+            finishReason: 'stop',
+            usage: null,
+          })
         : fail('unavailable', 'The fixture proposal has no more steps');
     },
   };
