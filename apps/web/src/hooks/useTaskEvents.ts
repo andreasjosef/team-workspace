@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { eventsUrl } from '../api.ts';
 
 // Events that change the task snapshot or diff on the hub: invalidating the
-// query keeps the inbox, OutcomeCard, ReplyDraftBox and Changes tab in sync
+// query keeps the inbox, outcome, ReplyDraftBox and Changes tab in sync
 // immediately instead of waiting for the next poll tick.
 const SNAPSHOT_EVENTS = new Set<TaskEvent['type']>([
   'status',

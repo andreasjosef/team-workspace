@@ -6,15 +6,15 @@ import { useTaskEvents } from '../hooks/useTaskEvents.ts';
 import { statusLook } from '../taskView.ts';
 import { Conversation } from './Conversation.tsx';
 import { Dot } from './common.tsx';
-import { OutcomeCard } from './Outcome.tsx';
+import { OutcomeSummary } from './Outcome.tsx';
 import { PipelineFlow } from './PipelineFlow.tsx';
 import { ReceiptTabs } from './Receipt.tsx';
 
 // The main column under a report's title: two views of one report. The
 // Conversation is the support rep's: the customer, the run's milestones,
 // the live pipeline while the hub works, the outcome and the reply. The
-// Agent view is the working: the outcome, the pipeline (with Replay), then
-// the receipt. The pick lives in the URL (`?view=agent`), so a link opens
+// Agent view is the working: the pipeline (with Replay) headed by the
+// outcome, then the receipt. The pick lives in the URL (`?view=agent`), so a link opens
 // the same view and it stays put when the rep moves between reports.
 
 type View = 'conversation' | 'agent';
@@ -132,8 +132,8 @@ const TaskViews = ({
   const shown = pipeline.viewTask;
   return (
     <>
-      <OutcomeCard task={shown} />
       <PipelineFlow
+        outcome={<OutcomeSummary task={shown} />}
         model={pipeline.model}
         replaying={pipeline.replaying}
         canReplay={pipeline.canReplay}

@@ -95,7 +95,6 @@ select {
 .item.selected {
   background: var(--bg-hover);
   color: var(--text-strong);
-  box-shadow: inset 2px 0 0 var(--gold);
 }
 .item.selected .item-title {
   font-weight: 600;
@@ -254,33 +253,183 @@ table.iters th {
   font-weight: 400;
 }
 
-.diff {
+/* Changes tab: one card per file, syntax colours, changed words marked. */
+.dv {
+  padding: 0.75rem;
+  font-size: 0.85em;
+}
+.dv-empty {
+  padding: 1rem;
+}
+.dv .tk-kw {
+  color: var(--gold);
+}
+.dv .tk-str {
+  color: var(--cyan);
+}
+.dv :is(.tk-num, .tk-lit, .tk-const) {
+  color: var(--purple);
+}
+.dv .tk-fn {
+  color: var(--blue);
+}
+.dv .tk-type {
+  color: var(--text-strong);
+}
+.dv :is(.tk-op, .tk-pun) {
+  color: var(--muted);
+}
+.dv .tk-com {
+  color: var(--muted);
+  font-style: italic;
+}
+.dv-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  margin: 0 0.15rem 0.6rem;
+}
+.dv-counts {
+  display: inline-flex;
+  gap: 0.4rem;
   font-family: var(--font-mono);
-  font-size: 0.8em;
-  padding: 0.5rem 0;
+  font-variant-numeric: tabular-nums;
+}
+.dv-plus {
+  color: var(--green);
+}
+.dv-minus {
+  color: var(--red);
+}
+.dv-file {
+  border: 1px solid var(--bg-soft);
+  border-radius: var(--radius);
+  background: var(--bg-mid);
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.dv-file-head {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0 0.75rem;
+  background: var(--bg-soft);
+  color: var(--muted);
+  cursor: pointer;
+}
+.dv-file-head:hover {
+  background: var(--bg-hover);
+}
+.dv-file-head:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+}
+.dv-file-body {
+  overflow-x: auto;
+}
+.dv-chev {
+  color: var(--faint);
+  flex: none;
+  transition: transform 120ms ease;
+}
+.dv-chev.open {
+  transform: rotate(90deg);
+}
+.dv-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-name {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.dv-badge {
+  font-size: 0.85em;
+  padding: 0 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--bg-hover);
+}
+.dv-badge.added {
+  color: var(--green);
+}
+.dv-badge.deleted {
+  color: var(--red);
+}
+.dv-code {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  line-height: 1.6;
   margin: 0;
 }
-.diff div {
-  padding: 0 1rem;
+.dv-code td {
+  padding: 0;
+  border: 0;
+  vertical-align: top;
+}
+.dv-no {
+  width: 1%;
+  min-width: 2.25rem;
+  padding: 0 0.5rem !important;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dv-sign {
+  width: 1rem;
+  text-align: center;
+  user-select: none;
+  color: var(--faint);
+}
+.dv-text {
   white-space: pre;
+  padding: 0 1rem 0 0.25rem !important;
 }
-.diff .add {
+.dv-row.add td {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+.dv-row.add :is(.dv-no, .dv-sign) {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
   color: var(--green);
-  background: color-mix(in srgb, var(--green) 14%, transparent);
-  box-shadow: inset 2px 0 0 var(--green);
 }
-.diff .del {
+.dv-row.del td {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.dv-row.del :is(.dv-no, .dv-sign) {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
   color: var(--red);
-  background: color-mix(in srgb, var(--red) 14%, transparent);
-  box-shadow: inset 2px 0 0 var(--red);
 }
-.diff .hunk {
-  color: var(--blue);
+.dv-row.add .chg {
+  background: color-mix(in srgb, var(--green) 32%, transparent);
+  border-radius: 2px;
+}
+.dv-row.del .chg {
+  background: color-mix(in srgb, var(--red) 32%, transparent);
+  border-radius: 2px;
+}
+.dv-hunk td {
   background: color-mix(in srgb, var(--blue) 8%, transparent);
+  color: var(--muted);
+  padding: 0.2rem 0.75rem !important;
+  border-block: 1px solid var(--bg-soft);
 }
-.diff .file {
-  color: var(--text);
-  font-weight: 700;
+.dv-hunk:first-child td {
+  border-top: 0;
+}
+.dv-hunk-range {
+  color: var(--blue);
+  margin-right: 0.75rem;
 }
 
 .log {
@@ -306,78 +455,9 @@ table.iters th {
   color: var(--muted);
 }
 
-/* The task in plain words: the first thing a support rep reads. */
-.outcome {
-  display: block;
-  background: var(--bg-mid);
-  border-radius: var(--radius);
-  padding: 1.15rem 1.35rem;
-  margin: 1rem 0;
-  color: var(--text);
-  text-decoration: none;
-}
-.outcome-pr {
-  display: inline-block;
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 0 0 0.6rem;
-}
-.outcome-headline {
-  font-size: 1.25rem;
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-  margin: 0 0 0.25rem;
-}
-.outcome-detail {
-  margin: 0 0 0.5rem;
-}
-.outcome-customer {
-  margin: 0 0 0.75rem;
-  font-style: italic;
-}
-.outcome .actions {
-  margin: 0.75rem 0 0;
-}
 .task-meta {
   margin: 0;
 }
-.safety {
-  margin: 0.6rem 0 0;
-  font-size: 0.9em;
-}
-
-/* Report → reproduced → fixed → review. */
-.progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem 1.4rem;
-  list-style: none;
-  padding: 0;
-  margin: 0.5rem 0 0;
-  font-size: 0.9em;
-}
-.step {
-  color: var(--faint);
-}
-.step-mark {
-  margin-right: 0.35rem;
-}
-.step-done {
-  color: var(--muted);
-}
-.step-done .step-mark {
-  color: var(--green);
-}
-.step-current {
-  color: var(--gold);
-  font-weight: 700;
-}
-.step-stopped {
-  color: var(--red);
-}
-
 /* Everything below is the receipt for developers. */
 .details-head {
   margin: 2.25rem 0 0.25rem;
@@ -445,10 +525,6 @@ table.iters th {
 .message .untrusted {
   margin: 0.4rem 0 0;
 }
-.outcome-reason {
-  margin: 0 0 0.5rem;
-}
-
 .forward {
   margin: 1.5rem 0;
 }
@@ -504,7 +580,6 @@ table.iters th {
   background: var(--bg-soft);
   color: var(--text-strong);
   font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--gold);
 }
 .receipt-body {
   background: var(--bg-mid);
@@ -517,9 +592,6 @@ table.iters th {
 }
 .receipt-body pre {
   background: var(--bg-soft);
-}
-.receipt-body .diff {
-  background: transparent;
 }
 .receipt-body .untrusted {
   background: var(--bg-soft);
@@ -966,6 +1038,20 @@ table.iters th {
 .pipe-replay-btn.active {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+/* The outcome in plain words, at the top of the pipeline card. */
+.outcome-summary {
+  margin: 0 0 1rem;
+}
+.outcome-headline {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin: 0 0 0.25rem;
+}
+.outcome-detail {
+  margin: 0 0 0.25rem;
 }
 
 /* 5 horizontal stages with flat animated conduits between them */
@@ -1706,20 +1792,6 @@ table.iters th {
 .view-tab-status {
   margin-left: 0.6rem;
   font-weight: 400;
-  font-size: 0.85em;
-}
-
-.outcome-card {
-  margin: 0 0 1.25rem;
-}
-.outcome-card .card-headline {
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-  margin: 0 0 0.15rem;
-}
-.outcome-card .progress,
-.outcome-card .safety {
   font-size: 0.85em;
 }
 

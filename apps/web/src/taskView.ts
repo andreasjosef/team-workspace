@@ -123,35 +123,6 @@ export const outcome = (t: TaskSnapshot): Outcome => {
   }
 };
 
-// The four steps from report to reviewed fix, for the progress strip.
-export type StepState = 'done' | 'current' | 'todo' | 'stopped';
-export type Step = { label: string; state: StepState };
-
-export const progress = (t: TaskSnapshot): Step[] => {
-  const live = t.status === 'queued' || t.status === 'working';
-  const fixed = t.status === 'proposed' || t.status === 'pr_opened';
-  const ended = !live && !fixed;
-  const repro = reproduced(t) || fixed;
-  const step = (label: string, done: boolean, current: boolean): Step => ({
-    label,
-    state: done ? 'done' : current ? 'current' : 'todo',
-  });
-  const steps = [
-    step('Report received', true, false),
-    step('Problem reproduced', repro, live),
-    step('Fix passes the tests', fixed, live && repro),
-    // The review happens on the pull request; the hub doesn't follow it
-    // after it opens, so this step stays current.
-    step('Developer review', false, t.status === 'pr_opened'),
-  ];
-  // Where an ended task stopped: the first step it didn't finish.
-  if (ended) {
-    const at = steps.findIndex((s) => s.state !== 'done');
-    if (at > 0) steps[at] = { ...steps[at]!, state: 'stopped' };
-  }
-  return steps;
-};
-
 export const createdBy = (tasks: TaskSnapshot[], role: Role) =>
   tasks.filter((t) => t.input.role === role);
 
