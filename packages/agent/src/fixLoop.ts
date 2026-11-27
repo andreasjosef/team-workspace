@@ -18,12 +18,18 @@ import { decide, defaultStopRules, type StopRules } from './stop.ts';
 // A bug task goes in two steps, and the step comes from the loop's state,
 // never from the task text:
 // - reproduce: the answer may only create new test files. They're applied
-//   and checked; the loop goes on only if more tests fail than at the
-//   baseline. Otherwise they're discarded and the answer is rejected.
+//   and checked; the loop goes on only if the check shows the bug (see
+//   reproductionGate). Otherwise they're discarded and the answer is
+//   rejected.
 // - fix: anything the role's scope allows, except the reproduction.
 // So the curve shows the reproduction failing before the fix lands.
 
-export type CheckOutcome = CheckCounts & { errors: string };
+// `someTestFailed`: at least one test ran and failed, as opposed to a suite
+// that didn't load or a run that crashed (see checks.ts).
+export type CheckOutcome = CheckCounts & {
+  someTestFailed: boolean;
+  errors: string;
+};
 
 export type TaskStep = 'reproduce' | 'fix';
 
@@ -117,6 +123,37 @@ const vetAnswer = (
   return ok(answer);
 };
 
+// Whether a reproduction's check shows the bug: more tests fail than at the
+// baseline, no new type errors (the reproduction gets locked, and a type
+// error in it would keep the run from ever going green), and a test really
+// failed (a test file that doesn't load counts as a failure too, but
+// reproduces nothing). A crash in the code under test fails a test, so it
+// passes. Decided on the loop's state and the check alone. Null when
+// accepted, otherwise why not, for the model.
+export const reproductionGate = (
+  latest: CheckOutcome,
+  baseline: CheckCounts
+): string | null => {
+  const broken: string[] = [];
+  if (latest.testsFailed <= baseline.testsFailed)
+    broken.push(
+      `the reproduction must fail before the fix, but no more tests failed than before (${latest.testsFailed}).`
+    );
+  if (latest.typeErrors > baseline.typeErrors)
+    broken.push(
+      `the reproduction must not add type errors, but there are ${latest.typeErrors} (${baseline.typeErrors} before). Fix the test's types.`
+    );
+  if (!latest.someTestFailed && latest.testsFailed > baseline.testsFailed)
+    broken.push(
+      'the reproduction must fail a test, but no test failed: a test file did not load, or the run crashed before any test ran.'
+    );
+  if (!broken.length) return null;
+  return [
+    ...broken,
+    ...(latest.errors ? [`Current errors:\n${latest.errors}`] : []),
+  ].join('\n');
+};
+
 export const runTaskLoop = async (
   deps: TaskLoopDeps
 ): Promise<TaskLoopResult> => {
@@ -179,16 +216,16 @@ export const runTaskLoop = async (
         deps.onNote?.(`Iteration ${n}: patch refused (${result.message})`);
       } else {
         latest = await deps.check();
-        if (
-          deps.reproduceFirst &&
-          bug?.step === 'reproduce' &&
-          latest.testsFailed <= deps.baseline.testsFailed
-        ) {
+        const refused =
+          deps.reproduceFirst && bug?.step === 'reproduce'
+            ? reproductionGate(latest, deps.baseline)
+            : null;
+        if (deps.reproduceFirst && refused) {
           // Shown in the curve like any check, then taken out again: a test
-          // that passes reproduces nothing and never reaches the diff.
+          // that doesn't show the bug never reaches the diff.
           const paths = edits.map((e) => e.path);
           const discarded = await deps.discard(paths);
-          lastRejection = `the reproduction must fail before the fix, but no more tests failed than before (${latest.testsFailed}). ${discarded.success ? `Discarded: ${paths.join(', ')}` : `Not all discarded: ${discarded.message}`}`;
+          lastRejection = `${refused}\n${discarded.success ? `Discarded: ${paths.join(', ')}` : `Not all discarded: ${discarded.message}`}`;
           deps.onNote?.(`Iteration ${n}: answer rejected (${lastRejection})`);
         } else {
           lastRejection = undefined;

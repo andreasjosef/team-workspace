@@ -73,7 +73,7 @@ Once the status is final, the hub drafts a reply for the support rep (a `reply_d
 
 A bug task goes in two steps, enforced by the loop rather than asked for in the prompt; the step comes from the loop's state, never from the task text:
 
-- **Reproduce:** the answer may only create new test files. They're applied and checked; the loop goes on only if more tests fail than at the baseline. Otherwise they're deleted from the worktree (and never reach the diff) and the answer is rejected. This holds even when the baseline already has failing tests (spec 1, open questions).
+- **Reproduce:** the answer may only create new test files. They're applied and checked; the loop goes on only if more tests fail than at the baseline, there are no more type errors than at the baseline, and at least one test really failed (Vitest's `Tests N failed`, not a test file that didn't load; a crash in the code under test counts). Otherwise they're deleted from the worktree (and never reach the diff) and the answer is rejected. This holds even when the baseline already has failing tests (spec 1, open questions).
 - **Fix:** anything the role's scope allows, except the reproduction. The stop rules count from the reproduction's check, since it raised the count on purpose.
 
 The role policy sees every answer before the step rule, so a step never hides an out-of-scope edit from the refusal count.
