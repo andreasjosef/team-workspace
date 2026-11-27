@@ -560,9 +560,8 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'flagged', reason: fixtureReason(events) });
     return;
   }
-  // A flagged report never gets here: it ended after the context phase.
-  // Spec 4 owns the full halt rule; see docs/ticket-to-pr/README.md, "Open
-  // questions".
+  // A flagged report never gets here: it ended after the context phase (the
+  // halt rule, docs/ticket-to-pr/README.md, "Open questions").
   if (outcome.status === 'halted') {
     emit({ type: 'status', status: 'flagged', reason: outcome.reason });
     return;
