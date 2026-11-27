@@ -2,10 +2,12 @@ import type { Incident } from '@app/shared';
 import { useSearchParams } from 'react-router';
 import { Dot, Status } from '../components/common.tsx';
 import { ForwardButton } from '../components/ForwardButton.tsx';
+import { Tour } from '../components/Tour.tsx';
 import { Workspace } from '../components/Workspace.tsx';
 import { myTasks } from '../myTasks.ts';
 import { useIncidents, useMyTasks } from '../queries.ts';
 import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
+import { tour } from '../tour.ts';
 
 const severityTone: Record<string, Tone> = {
   high: 'red',
@@ -17,7 +19,8 @@ const severityTone: Record<string, Tone> = {
 // the one they're working on in the middle, as a conversation with the
 // customer or as the agent's working. Forwarding a report keeps them here.
 // Only this browser's tasks count (myTasks.ts), so each visitor to the live
-// demo starts from an untouched inbox.
+// demo starts from an untouched inbox. A first visit opens the tour
+// (tour.ts), which says what the hard-coded inbox stands in for.
 export const CsView = () => {
   const reports = useIncidents().data ?? [];
   const tasks = useMyTasks();
@@ -28,8 +31,16 @@ export const CsView = () => {
   return (
     <div className="cockpit">
       <aside className="inbox" aria-label="Customer reports">
-        <h2>Inbox</h2>
-        <ul className="list">
+        <div className="inbox-head">
+          <h2>Inbox</h2>
+          <button className="linkish small" onClick={() => tour.start()}>
+            How this works
+          </button>
+        </div>
+        <p className="muted small inbox-note">
+          Sample reports. In a product they come from any support channel.
+        </p>
+        <ul className="list" data-tour="inbox">
           {reports.map((r) => {
             const task = taskForIncident(tasks, r.id);
             return (
@@ -58,6 +69,10 @@ export const CsView = () => {
           })}
         </ul>
         {reports.length === 0 && <p className="empty">No reports.</p>}
+        <p className="muted small inbox-repo" data-tour="repo">
+          Connected to a GitHub repository. Fixes arrive there as pull requests
+          a developer reviews.
+        </p>
         {tasks.length > 0 && (
           <p className="muted small inbox-reset">
             Only the runs you started show here.{' '}
@@ -75,6 +90,7 @@ export const CsView = () => {
           <p className="empty">Pick a report.</p>
         )}
       </main>
+      {reports.length > 0 && <Tour />}
     </div>
   );
 };

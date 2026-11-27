@@ -2065,3 +2065,84 @@ table.iters th {
     animation: none;
   }
 }
+
+/* The inbox's own hints: what the sample reports and the repo behind them
+   stand for. The tour points at them too. */
+.inbox-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.inbox-head h2 {
+  margin-bottom: 0.15rem;
+}
+.inbox-note {
+  margin: 0 0 0.75rem;
+  line-height: 1.45;
+}
+.inbox-repo {
+  margin: 1rem 0 0;
+  line-height: 1.45;
+}
+
+/* The first-visit tour: a spotlight cut out of a dimmed page, and a card
+   beside it. The spotlight's shadow does the dimming. */
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+.tour-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+.tour-spot {
+  position: fixed;
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 2px var(--gold),
+    0 0 0 9999px rgba(0, 0, 0, 0.6);
+  transition:
+    top 200ms ease,
+    left 200ms ease,
+    width 200ms ease,
+    height 200ms ease;
+  pointer-events: none;
+}
+.tour-card {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 32px));
+  background: var(--bg-mid);
+  border: 1px solid var(--bg-hover);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem 0.9rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.tour-count {
+  margin: 0 0 0.2rem;
+}
+.tour-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.15em;
+  color: var(--text-strong);
+}
+.tour-body {
+  margin: 0 0 0.9rem;
+  line-height: 1.5;
+}
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tour-skip {
+  margin-right: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot {
+    transition: none;
+  }
+}
