@@ -145,7 +145,7 @@ describe('derivePipeline', () => {
     expect(done.stages[4]?.detail).toBe('1 file · +1 -1');
   });
 
-  it('shows containment blocks across scan, agent policy, sandbox network, and output on hostile tickets', () => {
+  it('shows containment blocks across scan, agent policy, sandbox network, and output on a fixture run', () => {
     const events = wrap([
       { type: 'status', status: 'working' },
       { type: 'phase', phase: 'context' },
@@ -175,6 +175,38 @@ describe('derivePipeline', () => {
     expect(p.stages[4]?.label).toBe('Blocked');
     expect(p.stages[4]?.detail).toBe('Nothing published');
     expect(p.connectors[3]).toBe('blocked');
+  });
+
+  it('a flagged report stops at the scan: sandbox, agent and checks not reached, nothing published', () => {
+    const events = wrap([
+      { type: 'status', status: 'working' },
+      { type: 'phase', phase: 'context' },
+      { type: 'base', sha: 'a'.repeat(40) },
+      { type: 'input_flagged', signals: ['tries to override instructions'] },
+      {
+        type: 'context',
+        files: ['src/auth/users.ts'],
+        decisions: [],
+      },
+      {
+        type: 'status',
+        status: 'flagged',
+        reason:
+          "The report carried instructions (tries to override instructions), so the agent didn't work on it",
+      },
+    ]);
+    const snap = snapshotFromEvents(baseTask(), events, { replace: true });
+    const p = derivePipeline(snap, events);
+    expect(p.mood).toBe('flagged');
+    expect(p.headline).toBe('Contained at the scan');
+    expect(p.stages.map((s) => [s.state, s.detail])).toEqual([
+      ['blocked', '1 signal flagged'],
+      ['stopped', 'Not reached'],
+      ['stopped', 'Not reached'],
+      ['stopped', 'Not reached'],
+      ['blocked', 'Nothing published'],
+    ]);
+    expect(p.iterations).toEqual([]);
   });
 
   it('marks later stages stopped when a task gives up', () => {

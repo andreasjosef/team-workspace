@@ -413,7 +413,11 @@ const AgentSaw = ({ task }: { task: TaskSnapshot }) => {
       {task.prompt ? (
         task.prompt.sections.map((s) => <Section key={s.title} section={s} />)
       ) : (
-        <p className="empty">No prompt sent yet</p>
+        <p className="empty">
+          {task.status === 'queued' || task.status === 'working'
+            ? 'No prompt sent yet'
+            : 'No prompt was sent'}
+        </p>
       )}
     </details>
   );
@@ -437,7 +441,7 @@ export const RunView = ({ task }: { task: TaskSnapshot }) => {
   return (
     <>
       {steps.length === 0 ? (
-        <p className="empty tab-lead">Not run yet</p>
+        <p className="empty tab-lead">{live ? 'Not run yet' : 'Not run'}</p>
       ) : (
         <>
           <p className="tab-lead run-sentence">{runSentence(steps, live)}</p>
