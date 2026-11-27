@@ -1,6 +1,6 @@
 # /etc/systemd/system/team-workspace-hub.service
 [Unit]
-Description=Team Workspace hub
+Description=Sandbugs hub
 After=docker.service network-online.target
 Requires=docker.service
 

@@ -90,7 +90,7 @@ export const createGitHubPublisher = (opts: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${opts.token}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'team-workspace-hub',
+        'User-Agent': 'sandbugs-hub',
         'X-GitHub-Api-Version': '2022-11-28',
       },
       body: JSON.stringify(body),
