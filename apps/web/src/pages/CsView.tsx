@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router';
 import { Dot, Status } from '../components/common.tsx';
 import { ForwardButton } from '../components/ForwardButton.tsx';
 import { Workspace } from '../components/Workspace.tsx';
-import { useIncidents, useTasks } from '../queries.ts';
+import { myTasks } from '../myTasks.ts';
+import { useIncidents, useMyTasks } from '../queries.ts';
 import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
 
 const severityTone: Record<string, Tone> = {
@@ -15,9 +16,11 @@ const severityTone: Record<string, Tone> = {
 // The support rep's cockpit: the inbox of customer reports on the left, and
 // the one they're working on in the middle, as a conversation with the
 // customer or as the agent's working. Forwarding a report keeps them here.
+// Only this browser's tasks count (myTasks.ts), so each visitor to the live
+// demo starts from an untouched inbox.
 export const CsView = () => {
   const reports = useIncidents().data ?? [];
-  const tasks = useTasks().data ?? [];
+  const tasks = useMyTasks();
   const [params, setParams] = useSearchParams();
   const selected =
     reports.find((r) => r.id === params.get('report')) ?? reports[0];
@@ -55,6 +58,14 @@ export const CsView = () => {
           })}
         </ul>
         {reports.length === 0 && <p className="empty">No reports.</p>}
+        {tasks.length > 0 && (
+          <p className="muted small inbox-reset">
+            Only the runs you started show here.{' '}
+            <button className="linkish" onClick={() => myTasks.clear()}>
+              Start over
+            </button>
+          </p>
+        )}
       </aside>
 
       <main className="focus">
@@ -69,7 +80,7 @@ export const CsView = () => {
 };
 
 const Report = ({ report }: { report: Incident }) => {
-  const tasks = useTasks().data ?? [];
+  const tasks = useMyTasks();
   const task = taskForIncident(tasks, report.id);
   return (
     <>

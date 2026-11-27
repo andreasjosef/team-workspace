@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { api, unwrap } from './api.ts';
+import { mine, useMyTaskIds } from './myTasks.ts';
 
 // The shared reads every view uses. Lists poll: simple, and plenty for a
 // demo with a handful of tasks. A single task's live log uses the WebSocket.
@@ -29,6 +31,13 @@ export const useTasks = () =>
     queryFn: async () => unwrap(await api.tasks()),
     refetchInterval: 1500,
   });
+
+// The tasks this browser forwarded (see myTasks.ts).
+export const useMyTasks = () => {
+  const { data } = useTasks();
+  const ids = useMyTaskIds();
+  return useMemo(() => mine(data ?? [], ids), [data, ids]);
+};
 
 export const useTask = (id: string) =>
   useQuery({

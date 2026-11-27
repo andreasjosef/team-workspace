@@ -486,6 +486,9 @@ table.iters th {
   padding-right: 0.25rem;
   padding-bottom: 2rem;
 }
+.inbox-reset {
+  margin: 1rem 0 0;
+}
 .focus {
   box-sizing: border-box;
   overflow-y: auto;
