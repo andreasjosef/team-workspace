@@ -29,9 +29,26 @@ export const EditsResponse = z.object({
 });
 export type EditsResponse = z.infer<typeof EditsResponse>;
 
+// The other valid answer: the model won't change anything (the behaviour is
+// intended, the problem can't be reproduced from the code, or the report asks
+// for something it won't do). The reason is required; a stop has no edits.
+export const StopAnswer = z.object({
+  action: z.literal('stop'),
+  reasoning: z.string().optional(),
+  reason: z.string().trim().min(1),
+});
+export type StopAnswer = z.infer<typeof StopAnswer>;
+
+export type Answer = EditsResponse | StopAnswer;
+
+export const isStop = (a: Answer): a is StopAnswer => 'action' in a;
+
 // Pulls the JSON object out of a model reply (models like to wrap it in
-// ```json fences or add a sentence) and validates it.
-export const parseEditsResponse = (text: string): Result<EditsResponse> => {
+// ```json fences or add a sentence) and validates it: a stop answer when
+// `action` is "stop", an edit answer when there's no `action`, so prompts
+// and fixtures from before the stop answer keep working. Anything else is
+// rejected, never obeyed.
+export const parseAnswer = (text: string): Result<Answer> => {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) {
@@ -42,6 +59,27 @@ export const parseEditsResponse = (text: string): Result<EditsResponse> => {
     json = JSON.parse(text.slice(start, end + 1));
   } catch (err) {
     return fail('invalid', `The reply is not valid JSON: ${String(err)}`);
+  }
+  if (typeof json !== 'object' || json === null || Array.isArray(json))
+    return fail('invalid', 'The reply is not a JSON object');
+  if ('action' in json) {
+    if (json.action !== 'stop')
+      return fail(
+        'invalid',
+        `Unknown "action" ${JSON.stringify(json.action)?.slice(0, 40)}: answer with edits and no "action", or with "action": "stop" and a reason`
+      );
+    if ('edits' in json)
+      return fail(
+        'invalid',
+        'A "stop" answer carries no edits: stop with a reason, or propose edits without "action"'
+      );
+    const stop = StopAnswer.safeParse(json);
+    return stop.success
+      ? ok(stop.data)
+      : fail(
+          'invalid',
+          `A "stop" answer needs a non-empty "reason": ${stop.error.message}`
+        );
   }
   const parsed = EditsResponse.safeParse(json);
   return parsed.success

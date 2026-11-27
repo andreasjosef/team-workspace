@@ -71,6 +71,8 @@ Once the status is final, the hub drafts a reply for the support rep (a `reply_d
 
 "Green" means no more type errors and failing tests than the baseline, **and** at least one accepted proposal: a task starts green, so the plain stop rule would end it before it did anything (`runTaskLoop` in `packages/agent/src/fixLoop.ts`).
 
+Instead of edits, the model may answer `"action": "stop"` with a reason: it won't change anything (`parseAnswer` in `edits.ts` rejects a stop without a reason, one with edits, and an unknown `action`). A valid stop, in either step, ends the loop `stopped` at once, never green even after an applied fix, and the hub ends the task `gave_up` with the model's reason (capped) as the status reason, so it shows on the receipt. It carries no edits, so no policy check; it never publishes.
+
 A bug task goes in two steps, enforced by the loop rather than asked for in the prompt; the step comes from the loop's state, never from the task text:
 
 - **Reproduce:** the answer may only create new test files. They're applied and checked; the loop goes on only if more tests fail than at the baseline, there are no more type errors than at the baseline, and at least one test really failed (Vitest's `Tests N failed`, not a test file that didn't load; a crash in the code under test counts). Otherwise they're deleted from the worktree (and never reach the diff) and the answer is rejected. This holds even when the baseline already has failing tests (spec 1, open questions).

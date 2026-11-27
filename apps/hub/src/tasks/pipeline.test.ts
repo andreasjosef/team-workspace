@@ -3,6 +3,7 @@ import {
   templateReply,
   type ChatMessage,
   type EditsResponse,
+  type StopAnswer,
   type Inference,
 } from '@app/agent';
 import type {
@@ -246,7 +247,7 @@ const DRAFT_CALL_LOG = {
 // reply draft's call is answered by `draft` and kept apart in `draftCalls`,
 // so `calls` holds only the fix loop's.
 const scriptedInference = (
-  replies: (EditsResponse | string)[],
+  replies: (EditsResponse | StopAnswer | string)[],
   {
     draft = async () => ok(CLEAN_DRAFT),
   }: { draft?: () => Promise<Result<string>> } = {}
@@ -1110,6 +1111,57 @@ describe('pipeline', () => {
     expect(
       out.events.filter((e) => e.type === 'iteration').map((e) => e.n)
     ).toEqual([0, 1]);
+  });
+
+  it('a stop answer ends the task gave_up with the model reason, and nothing is published, even after an applied fix', async () => {
+    const hub = await makeHub();
+    const wrongFix: EditsResponse = {
+      reasoning: 'Maybe the input is not a string.',
+      edits: [
+        {
+          path: 'src/checkout/discount.ts',
+          search: 'CODES[input.trim()]',
+          replace: 'CODES[String(input).trim()]',
+        },
+      ],
+    };
+    const stop: StopAnswer = {
+      action: 'stop',
+      reasoning: 'The codes table is the source of truth.',
+      reason: 'I could not find a cause in the code for this report.',
+    };
+    const published: PublishInput[] = [];
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, wrongFix, stop]),
+      publisher: {
+        publish: async (input) => {
+          published.push(input);
+          return fail('unexpected', 'must not publish');
+        },
+      },
+    });
+
+    // The reproduction still fails after the applied fix: the stop ends the
+    // loop there, and never counts as green.
+    expect(
+      out.events.flatMap((e) => (e.type === 'iteration' ? [e.testsFailed] : []))
+    ).toEqual([0, 1, 1]);
+    expect(out.status).toBe('gave_up');
+    expect(out.reason).toBe(
+      'The agent stopped without a fix: I could not find a cause in the code for this report.'
+    );
+    expect(published).toHaveLength(0);
+    expect(out.pr).toBeUndefined();
+    expect(out.phases).toEqual(['context', 'baseline', 'fix']);
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: `Model call 3: stopped (${stop.reason})`,
+    });
+    // The rep still gets a draft for the outcome.
+    expect(out.events.at(-1)).toMatchObject({ type: 'reply_draft' });
   });
 
   it('INC-1043: through the API, the flagged task has no pull request', async () => {
