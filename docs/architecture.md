@@ -67,6 +67,8 @@ queued → working → pr_opened
                  ↘ error (also: patch refused or publishing failed)
 ```
 
+Once the status is final, the hub drafts a reply for the support rep (a `reply_draft` event, never a status change): one more model call for `pr_opened`, `gave_up` and `error`, with the report only inside `wrapUntrusted`; a fixed template for `flagged`. `checkReplyDraft` (`packages/agent/src/reply.ts`) holds a model draft to plain text, 1200 characters, no URLs, email addresses or promised dates, and a fix in review never described as shipped; a draft that breaks a rule, fails or times out is the template. The hub never sends it.
+
 "Green" means no more type errors and failing tests than the baseline, **and** at least one accepted proposal: a task starts green, so the plain stop rule would end it before it did anything (`runTaskLoop` in `packages/agent/src/fixLoop.ts`).
 
 A bug task goes in two steps, enforced by the loop rather than asked for in the prompt; the step comes from the loop's state, never from the task text:

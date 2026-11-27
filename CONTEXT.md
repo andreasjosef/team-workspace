@@ -94,3 +94,7 @@ _Avoid_: Deploy, merge, approval
 **Receipt**:
 The account of a task: what the agent saw, what it tried, and what was refused or blocked. It becomes the pull request's description.
 _Avoid_: Log, report, summary
+
+**Reply draft**:
+The reply the hub drafts for the support rep to send the customer once a task has ended: by the model from hub facts, or from a fixed template (flagged tasks, and any model draft that breaks the rules). The rep edits and sends it; the hub never sends anything.
+_Avoid_: Response, answer, auto-reply

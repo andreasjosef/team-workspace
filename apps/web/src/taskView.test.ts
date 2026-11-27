@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   outcome,
   progress,
+  replyDraftLabel,
   reproduced,
   taskForIncident,
   timeAgo,
@@ -26,6 +27,7 @@ const task = (patch: Partial<TaskSnapshot>): TaskSnapshot => ({
   previewUrl: null,
   hasDiff: true,
   pr: { url: 'https://github.invalid/pull/7', number: 7, draft: false },
+  replyDraft: null,
   ...patch,
 });
 
@@ -60,6 +62,13 @@ describe('plain words for the support rep', () => {
         task({ status: 'working', phase: 'fix', iterations: iters(0, 1) })
       ).detail
     ).toMatch(/fix/);
+  });
+
+  it('labels who drafted the reply', () => {
+    expect(replyDraftLabel({ source: 'model' })).toBe('Drafted by the model');
+    expect(replyDraftLabel({ source: 'template' })).toBe(
+      'Drafted from a template'
+    );
   });
 
   it('tells the customer nothing about a flagged report', () => {

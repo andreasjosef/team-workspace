@@ -47,6 +47,7 @@ export const createTaskStore = () => {
       blocked: [],
       previewUrl: null,
       pr: null,
+      replyDraft: null,
       diff: null,
       events: [],
       listeners: new Set(),
@@ -90,6 +91,9 @@ export const createTaskStore = () => {
         break;
       case 'pr':
         t.pr = { url: e.url, number: e.number, draft: e.draft };
+        break;
+      case 'reply_draft':
+        t.replyDraft = { text: e.text, source: e.source };
         break;
     }
   };

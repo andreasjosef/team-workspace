@@ -3,8 +3,12 @@ import {
   matchDecisions,
   rankFiles,
   scanTaskInput,
+  templateReply,
+  wantsModelDraft,
   type Edit,
+  type FinalStatus,
 } from '@app/agent';
+import type { TaskEvent } from '@app/shared';
 import type { Hub } from '../hub/load.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 
@@ -181,6 +185,24 @@ const pickScenario = (text: string, signals: string[]): Scenario | null => {
   return null;
 };
 
+// What the real pipeline's draft call might answer, for the outcomes a model
+// drafts; the rest get the real template. Plain, dateless, keeps the rules.
+const CANNED_DRAFTS: Partial<Record<FinalStatus, string>> = {
+  pr_opened:
+    "Hi,\n\nThanks for telling us about this, and sorry for the trouble at checkout. We could reproduce the problem with the code, and a fix is waiting for a developer's review. Once it's out, the code will work however you type it. We'll let you know.\n\nBest regards",
+  gave_up:
+    "Hi,\n\nThanks for telling us about this. We looked into it but couldn't pin it down yet, so it's now with our developers. We'll be in touch when we know more.\n\nBest regards",
+};
+
+const cannedDraft = (status: FinalStatus): TaskEvent => {
+  const text = CANNED_DRAFTS[status];
+  return text && wantsModelDraft({ status })
+    ? { type: 'reply_draft', text, source: 'model' }
+    : { type: 'reply_draft', ...templateReply(status) };
+};
+
+const FINAL: readonly string[] = ['pr_opened', 'gave_up', 'flagged', 'error'];
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Stands in for the commit a real task syncs to. Not a real commit.
@@ -194,7 +216,7 @@ export const createMockRunner = (
   const step = () => sleep(stepMs);
   let opened = 0;
 
-  const run = async ({
+  const script = async ({
     id,
     branch,
     input,
@@ -337,6 +359,21 @@ export const createMockRunner = (
       status: 'pr_opened',
       reason: `Pull request #${number} is open for a developer`,
     });
+  };
+
+  // The script, then the reply draft once the status is final, as the real
+  // pipeline does it.
+  const run = async (task: TaskHandle) => {
+    let status: string | null = null;
+    await script({
+      ...task,
+      emit: (e) => {
+        if (e.type === 'status') status = e.status;
+        task.emit(e);
+      },
+    });
+    if (status && FINAL.includes(status))
+      task.emit(cannedDraft(status as FinalStatus));
   };
 
   return { run };

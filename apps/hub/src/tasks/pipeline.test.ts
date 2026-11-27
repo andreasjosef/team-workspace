@@ -1,5 +1,6 @@
 import {
   checkOutput,
+  templateReply,
   type ChatMessage,
   type EditsResponse,
   type Inference,
@@ -15,6 +16,7 @@ import {
   fail,
   ok,
   type CreateTaskInput,
+  type Result,
   type CreateTaskResponse,
   type TaskEvent,
   type TaskSnapshot,
@@ -217,17 +219,37 @@ const fakeDenied = (entries: DeniedRequest[] = []) => {
   return { fetch, calls };
 };
 
-// Replies in order; the last one repeats. An object is sent as JSON.
-const scriptedInference = (replies: (EditsResponse | string)[]) => {
+// A reply draft that keeps every rule, for a fix waiting for review.
+const CLEAN_DRAFT =
+  "Hi,\n\nThanks for telling us. We could reproduce the problem with lower-case codes, and a fix is waiting for a developer's review. We'll let you know once it's out.\n\nBest regards";
+
+// The reply draft's call, told apart from the fix loop's by its prompt.
+const isDraftCall = (messages: ChatMessage[]) =>
+  messages[0]?.content.startsWith('Write the reply') ?? false;
+
+// Replies in order; the last one repeats. An object is sent as JSON. The
+// reply draft's call is answered by `draft` and kept apart in `draftCalls`,
+// so `calls` holds only the fix loop's.
+const scriptedInference = (
+  replies: (EditsResponse | string)[],
+  {
+    draft = async () => ok(CLEAN_DRAFT),
+  }: { draft?: () => Promise<Result<string>> } = {}
+) => {
   const calls: ChatMessage[][] = [];
+  const draftCalls: ChatMessage[][] = [];
   const inference: Inference = {
     complete: async (messages) => {
+      if (isDraftCall(messages)) {
+        draftCalls.push(messages);
+        return draft();
+      }
       const reply = replies[Math.min(calls.length, replies.length - 1)]!;
       calls.push(messages);
       return ok(typeof reply === 'string' ? reply : JSON.stringify(reply));
     },
   };
-  return { inference, calls };
+  return { inference, calls, draftCalls };
 };
 
 // ---- Running a task ------------------------------------------------------
@@ -458,8 +480,14 @@ describe('pipeline', () => {
     expect(report).toContain(fix.reasoning);
     expect(body).toContain(`\`${REPRO_TEST}\``);
     expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
-    // The pull request comes first, then the status that says so.
-    expect(out.events.at(-2)).toEqual({
+    // The pull request comes first, then the status that says so, then the
+    // reply draft, which the scripted model wrote within the rules.
+    expect(out.events.at(-1)).toEqual({
+      type: 'reply_draft',
+      text: CLEAN_DRAFT,
+      source: 'model',
+    });
+    expect(out.events.at(-3)).toEqual({
       type: 'pr',
       url: `file://${hub.repoDir}#task/t1`,
       number: 1,
@@ -591,6 +619,7 @@ describe('pipeline', () => {
     const leftOver: boolean[] = [];
     const complete = model.inference.complete;
     model.inference.complete = async (messages) => {
+      if (isDraftCall(messages)) return complete(messages);
       const ws = join(base, 'tasks', 't1', 'repo');
       leftOver.push(
         (await readFile(join(ws, passing.edits[0]!.path), 'utf8').catch(
@@ -1154,6 +1183,99 @@ const withOrigin = async (hub: Hub) => {
 
 const D_030 =
   "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
+
+// What follows the final status: only the reply draft (and a log line on
+// a fallback). Nothing after it changes the status.
+const afterStatus = (events: TaskEvent[]) =>
+  events.slice(events.findLastIndex((e) => e.type === 'status') + 1);
+
+describe('reply draft', () => {
+  it('INC-1042: the model drafts the reply from hub facts once the pull request is open', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(afterStatus(out.events)).toEqual([
+      { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
+    ]);
+    expect(model.draftCalls).toHaveLength(1);
+    const user = model.draftCalls[0]![1]!.content;
+    expect(user).toContain("A fix is waiting for a developer's review: yes");
+    expect(user).toContain('D-014');
+    expect(user).toContain('src/checkout/discount.ts');
+    expect(user).toContain(
+      `<untrusted source="incident INC-1042">\n${INC_1042.title}\n${INC_1042.text}\n</untrusted>`
+    );
+  });
+
+  it('INC-1043: a flagged task gets the template, and the model is not asked for a draft', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference(refusesThenFixes);
+    const out = await runTask({
+      hub,
+      input: INC_1043,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('flagged');
+    expect(afterStatus(out.events)).toEqual([
+      { type: 'reply_draft', ...templateReply('flagged') },
+    ]);
+    expect(model.draftCalls).toHaveLength(0);
+  });
+
+  it('a failed draft call falls back to the template and leaves the status alone', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix], {
+        draft: async () => fail('unavailable', 'Inference answered 503'),
+      }),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(afterStatus(out.events)).toEqual([
+      {
+        type: 'log',
+        message: 'Reply draft: the template (Inference answered 503)',
+      },
+      { type: 'reply_draft', ...templateReply('pr_opened') },
+    ]);
+  });
+
+  it('a draft that breaks the rules falls back to the template and leaves the status alone', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix], {
+        draft: async () =>
+          ok('**Fixed!** It is live now, see https://demo-shop.example.'),
+      }),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const [log, draft] = afterStatus(out.events);
+    expect(log).toMatchObject({
+      type: 'log',
+      message: expect.stringMatching(/broke the rules.*markdown.*a URL/),
+    });
+    expect(draft).toEqual({
+      type: 'reply_draft',
+      ...templateReply('pr_opened'),
+    });
+  });
+});
 
 describe('sync from origin', () => {
   it('a change merged on origin between two tasks shows up in the second task, without rebuilding the hub', async () => {

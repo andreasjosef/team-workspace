@@ -36,6 +36,14 @@ export const PullRequest = z.object({
 });
 export type PullRequest = z.infer<typeof PullRequest>;
 
+// The reply the support rep can send the customer, drafted after the task
+// ended. The hub never sends it.
+export const ReplyDraft = z.object({
+  text: z.string(),
+  source: z.enum(['model', 'template']),
+});
+export type ReplyDraft = z.infer<typeof ReplyDraft>;
+
 export const TaskEvent = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('status'),
@@ -82,6 +90,8 @@ export const TaskEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('preview'), url: z.string() }),
   // The pull request the hub opened. Followed by status `pr_opened`.
   z.object({ type: z.literal('pr'), ...PullRequest.shape }),
+  // The drafted reply. Arrives after the final status and never changes it.
+  z.object({ type: z.literal('reply_draft'), ...ReplyDraft.shape }),
 ]);
 export type TaskEvent = z.infer<typeof TaskEvent>;
 
