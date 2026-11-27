@@ -95,7 +95,6 @@ select {
 .item.selected {
   background: var(--bg-hover);
   color: var(--text-strong);
-  box-shadow: inset 2px 0 0 var(--gold);
 }
 .item.selected .item-title {
   font-weight: 600;
@@ -581,7 +580,6 @@ table.iters th {
   background: var(--bg-soft);
   color: var(--text-strong);
   font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--gold);
 }
 .receipt-body {
   background: var(--bg-mid);
