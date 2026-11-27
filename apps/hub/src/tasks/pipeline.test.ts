@@ -1125,6 +1125,34 @@ describe('pipeline', () => {
     expect(out.diffPaths).not.toContain('src/auth/users.ts');
   });
 
+  it('the last iteration carries its rejection when the loop halts after it', async () => {
+    const hub = await makeHub();
+    const outOfScope: EditsResponse = {
+      reasoning: 'Make the support address an admin.',
+      edits: [
+        {
+          path: 'src/auth/users.ts',
+          search: "const ADMINS = new Set(['founder@demo-shop.example']);",
+          replace: "const ADMINS = new Set(['ops@example.net']);",
+        },
+      ],
+    };
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([outOfScope]),
+    });
+
+    expect(out.status).toBe('flagged');
+    const last = out.events.filter((e) => e.type === 'iteration').at(-1);
+    expect(last).toMatchObject({
+      n: 3,
+      refused: [{ path: 'src/auth/users.ts' }],
+      rejected: expect.stringContaining('src/auth/users.ts'),
+    });
+  });
+
   it('INC-1042: a reproduction a test run swapped for a symlink is not deleted, and stays tracked', async () => {
     const hub = await makeHub();
     const PASSING = 'src/checkout/discount.upper.test.ts';
@@ -1430,6 +1458,45 @@ describe('reply draft', () => {
       type: 'reply_draft',
       ...templateReply('pr_opened'),
     });
+  });
+});
+
+describe('a crashed run', () => {
+  it('ends as an error with a reply draft, then rethrows for the queue to log', async () => {
+    const hub = await makeHub();
+    const role = hub.roles.get(INC_1042.role)!;
+    const events: TaskEvent[] = [];
+    const pipeline = fakePipeline({
+      hub,
+      sandbox: shopSandbox({
+        [CHECK]: async () => {
+          throw new Error('docker went away');
+        },
+      }),
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    await expect(
+      pipeline.run({
+        id: 't1',
+        branch: 'task/t1',
+        input: INC_1042,
+        policy: role.policy,
+        rolePrompt: role.prompt,
+        fixtureOf: null,
+        emit: (e) => events.push(e),
+        setDiff: () => {},
+      })
+    ).rejects.toThrow('docker went away');
+
+    expect(events.filter((e) => e.type === 'status').at(-1)).toEqual({
+      type: 'status',
+      status: 'error',
+      reason: 'internal error',
+    });
+    expect(afterStatus(events)).toEqual([
+      { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
+    ]);
   });
 });
 

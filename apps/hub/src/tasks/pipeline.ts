@@ -18,13 +18,14 @@ import {
   type CheckCounts,
   type CheckOutcome,
   type Edit,
-  type FinalStatus,
   type Inference,
   type TaskContext,
 } from '@app/agent';
 import {
   fail,
+  isFinalStatus,
   ok,
+  type FinalStatus,
   type IterationAnswer,
   type Result,
   type TaskEvent,
@@ -143,12 +144,23 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
         task.setDiff(d);
       },
     };
+    // A fault ends the task as an error here, so it gets its reply draft
+    // too; rethrown after it for the queue to log (queue.ts).
+    let crash: { err: unknown } | null = null;
     try {
       await runTask(deps, watched, ws);
+    } catch (err) {
+      crash = { err };
+      if (!isFinalStatus(seen.status))
+        watched.emit({
+          type: 'status',
+          status: 'error',
+          reason: 'internal error',
+        });
     } finally {
       if (!deps.keepWorkspaces) await removeWorkspace(ws);
     }
-    if (isFinal(seen.status))
+    if (isFinalStatus(seen.status))
       await emitReplyDraft(deps, task, {
         status: seen.status,
         decisions: seen.decisions,
@@ -157,12 +169,9 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
         ),
         ...(task.fixtureOf ? { fixture: true } : {}),
       });
+    if (crash) throw crash.err;
   },
 });
-
-const FINAL: readonly string[] = ['pr_opened', 'gave_up', 'flagged', 'error'];
-const isFinal = (status: string | null): status is FinalStatus =>
-  status !== null && FINAL.includes(status);
 
 // The reply the support rep can send, drafted once the status is final: one
 // more model call for the outcomes a model may describe, the template for

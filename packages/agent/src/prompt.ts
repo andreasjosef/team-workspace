@@ -47,7 +47,16 @@ const stepLine = (ctx: TaskContext) => {
   return '';
 };
 
-type PromptPart = { title: string; text: string };
+// `capped`: the part cut to about `maxChars` some other way than its text's
+// end, e.g. the report, cut inside its untrusted wrapper.
+type PromptPart = {
+  title: string;
+  text: string;
+  capped?: (maxChars: number) => string;
+};
+
+const cut = (text: string, maxChars: number) =>
+  text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
 
 // The prompt's parts, titled: buildTaskMessages joins them into the messages
 // the model gets, and promptSections shows the same parts on the receipt.
@@ -66,18 +75,23 @@ const promptParts = (ctx: TaskContext) => {
     { title: 'Role policy', text: describeScope(ctx.policy) },
     { title: 'Answer rules', text: FORMAT },
   ];
+  const report = (text: string) =>
+    [
+      `Task (${ctx.task.kind}, from ${ctx.policy.label}): ${ctx.task.title}`,
+      wrapUntrusted(
+        ctx.task.incidentId
+          ? `incident ${ctx.task.incidentId}`
+          : ctx.policy.label,
+        text
+      ),
+    ].join('\n\n');
   const user: PromptPart[] = [
     {
       title: "The customer's report",
-      text: [
-        `Task (${ctx.task.kind}, from ${ctx.policy.label}): ${ctx.task.title}`,
-        wrapUntrusted(
-          ctx.task.incidentId
-            ? `incident ${ctx.task.incidentId}`
-            : ctx.policy.label,
-          ctx.task.text
-        ),
-      ].join('\n\n'),
+      text: report(ctx.task.text),
+      // The wrapper stays whole: only the report inside it is cut.
+      capped: (maxChars: number) =>
+        report(cut(ctx.task.text, Math.max(0, maxChars - report('').length))),
     },
     {
       title: 'Decisions',
@@ -110,7 +124,7 @@ export const buildTaskMessages = (ctx: TaskContext): ChatMessage[] => {
   ];
 };
 
-export type PromptSection = PromptPart & { chars: number };
+export type PromptSection = Omit<PromptPart, 'capped'> & { chars: number };
 
 // The prompt as the model gets it, in titled sections for the receipt, each
 // cut to `maxChars` (`chars` keeps the full length). The task text in it is
@@ -120,9 +134,14 @@ export const promptSections = (
   maxChars: number
 ): PromptSection[] => {
   const { system, user } = promptParts(ctx);
-  return [...system, ...user].map(({ title, text }) => ({
+  return [...system, ...user].map(({ title, text, capped }) => ({
     title,
-    text: text.length > maxChars ? `${text.slice(0, maxChars)}…` : text,
+    text:
+      text.length <= maxChars
+        ? text
+        : capped
+          ? capped(maxChars)
+          : cut(text, maxChars),
     chars: text.length,
   }));
 };

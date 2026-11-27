@@ -24,6 +24,19 @@ export const TaskStatus = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
+// The statuses a task ends in; a reply draft follows each of them.
+export const FINAL_STATUSES = [
+  'pr_opened',
+  'gave_up',
+  'flagged',
+  'error',
+] as const;
+export type FinalStatus = (typeof FINAL_STATUSES)[number];
+export const isFinalStatus = (
+  status: string | null | undefined
+): status is FinalStatus =>
+  (FINAL_STATUSES as readonly (string | null | undefined)[]).includes(status);
+
 export const BlockedKind = z.enum(['network', 'timeout', 'memory', 'pids']);
 export type BlockedKind = z.infer<typeof BlockedKind>;
 

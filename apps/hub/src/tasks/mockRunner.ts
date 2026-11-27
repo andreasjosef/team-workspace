@@ -9,9 +9,8 @@ import {
   wantsModelDraft,
   type Edit,
   type EditsResponse,
-  type FinalStatus,
 } from '@app/agent';
-import type { TaskEvent } from '@app/shared';
+import { isFinalStatus, type FinalStatus, type TaskEvent } from '@app/shared';
 import type { Hub } from '../hub/load.ts';
 import { FIXTURE_PROPOSAL, FIXTURE_TEST } from './fixture.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
@@ -249,8 +248,6 @@ const cannedDraft = (status: FinalStatus, fixture: boolean): TaskEvent => {
     : { type: 'reply_draft', ...templateReply(status) };
 };
 
-const FINAL: readonly string[] = ['pr_opened', 'gave_up', 'flagged', 'error'];
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Stands in for the commit a real task syncs to. Not a real commit.
@@ -454,7 +451,7 @@ export const createMockRunner = (
   // The script, then the reply draft once the status is final, as the real
   // pipeline does it.
   const run = async (task: TaskHandle) => {
-    let status: string | null = null;
+    let status: string | null = null as string | null;
     await script({
       ...task,
       emit: (e) => {
@@ -462,8 +459,8 @@ export const createMockRunner = (
         task.emit(e);
       },
     });
-    if (status && FINAL.includes(status))
-      task.emit(cannedDraft(status as FinalStatus, task.fixtureOf !== null));
+    if (isFinalStatus(status))
+      task.emit(cannedDraft(status, task.fixtureOf !== null));
   };
 
   return { run };

@@ -1,8 +1,9 @@
-import type {
-  CreateTaskInput,
-  EventEnvelope,
-  TaskEvent,
-  TaskSnapshot,
+import {
+  isFinalStatus,
+  type CreateTaskInput,
+  type EventEnvelope,
+  type TaskEvent,
+  type TaskSnapshot,
 } from '@app/shared';
 import { randomUUID } from 'node:crypto';
 
@@ -20,7 +21,6 @@ type TaskRecord = Omit<TaskSnapshot, 'hasDiff'> & {
 
 const MAX_TASKS = 200;
 const MAX_EVENTS = 5000;
-const FINISHED = new Set(['pr_opened', 'gave_up', 'flagged', 'error']);
 
 export const createTaskStore = () => {
   const tasks = new Map<string, TaskRecord>();
@@ -153,7 +153,7 @@ export const createTaskStore = () => {
       if (t) t.diff = diff;
     },
     diff: (id: string) => tasks.get(id)?.diff ?? null,
-    isFinished: (id: string) => FINISHED.has(tasks.get(id)?.status ?? ''),
+    isFinished: (id: string) => isFinalStatus(tasks.get(id)?.status),
   };
 };
 
