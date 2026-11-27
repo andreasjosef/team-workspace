@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, useParams } from 'react-router';
 import { Layout } from './Layout.tsx';
 import { CsView } from './pages/CsView.tsx';
 import { TaskPage } from './pages/TaskPage.tsx';
+import { DiffPrototypePage } from './pages/DiffPrototype.prototype.tsx';
 
 // The product is the support rep's view. A task page still works under any
 // role's URL (`/dev/tasks/:id`), but only cs has a home. Developers review
@@ -24,6 +25,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <RoleHome /> },
       { path: 'tasks/:id', element: <TaskPage /> },
+      // PROTOTYPE, throwaway: Changes tab variants on a sample diff.
+      { path: 'prototype/diff', element: <DiffPrototypePage /> },
     ],
   },
 ]);

@@ -1,0 +1,401 @@
+/* PROTOTYPE, throwaway: Linear-like diff view. See DiffView.prototype.tsx. */
+
+.lin {
+  --l-bg: #101112;
+  --l-panel: #151618;
+  --l-head: #1a1b1e;
+  --l-border: #26282c;
+  --l-border-soft: #1f2124;
+  --l-text: #e3e4e6;
+  --l-muted: #8a8f98;
+  --l-faint: #5a5e66;
+  --l-accent: #5e6ad2;
+  --l-green: #4cb782;
+  --l-red: #eb5757;
+  --l-add: rgba(76, 183, 130, 0.1);
+  --l-add-gutter: rgba(76, 183, 130, 0.16);
+  --l-add-word: rgba(76, 183, 130, 0.32);
+  --l-del: rgba(235, 87, 87, 0.1);
+  --l-del-gutter: rgba(235, 87, 87, 0.16);
+  --l-del-word: rgba(235, 87, 87, 0.32);
+  --l-font: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  --l-mono:
+    'Berkeley Mono', 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  font-family: var(--l-font);
+  font-size: 13px;
+  color: var(--l-text);
+  background: var(--l-bg);
+  padding: 12px;
+  letter-spacing: -0.005em;
+}
+.lin-empty {
+  color: var(--l-muted);
+}
+
+/* Syntax colours */
+.lin .tk-kw {
+  color: #c49cff;
+}
+.lin .tk-str {
+  color: #e8b86d;
+}
+.lin .tk-num,
+.lin .tk-lit,
+.lin .tk-const {
+  color: #f19a6a;
+}
+.lin .tk-fn {
+  color: #7fb4ff;
+}
+.lin .tk-type {
+  color: #5ccfc6;
+}
+.lin .tk-prop {
+  color: #c7ccd4;
+}
+.lin .tk-id {
+  color: var(--l-text);
+}
+.lin .tk-op {
+  color: #8fd3ff;
+}
+.lin .tk-pun {
+  color: var(--l-muted);
+}
+.lin .tk-com {
+  color: #6c717a;
+  font-style: italic;
+}
+
+/* Summary line */
+.lin-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--l-muted);
+  font-size: 12px;
+  margin: 0 2px 10px;
+}
+
+.lin-counts {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--l-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.lin-plus {
+  color: var(--l-green);
+}
+.lin-minus {
+  color: var(--l-red);
+}
+
+/* File card */
+.lin-file {
+  border: 1px solid var(--l-border);
+  border-radius: 8px;
+  background: var(--l-panel);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.lin-file-head {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--l-head);
+  color: var(--l-muted);
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.lin-file-head:hover {
+  background: #1e1f23;
+}
+.lin-file-body {
+  border-top: 1px solid var(--l-border);
+  overflow-x: auto;
+}
+.lin-chev {
+  color: var(--l-faint);
+  transition: transform 120ms ease;
+}
+.lin-chev.open {
+  transform: rotate(90deg);
+}
+.lin-path {
+  font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lin-dir {
+  color: var(--l-muted);
+}
+.lin-name {
+  color: var(--l-text);
+  font-weight: 500;
+}
+.lin-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--l-border);
+}
+.lin-badge.added {
+  color: var(--l-green);
+}
+.lin-badge.deleted {
+  color: var(--l-red);
+}
+
+/* Code table */
+.lin-code {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--l-mono);
+  font-size: 12px;
+  line-height: 20px;
+  margin: 0;
+}
+.lin-code td {
+  padding: 0;
+  border: 0;
+  vertical-align: top;
+}
+.lin-no {
+  width: 1%;
+  min-width: 36px;
+  padding: 0 8px !important;
+  text-align: right;
+  color: var(--l-faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lin-sign {
+  width: 16px;
+  text-align: center;
+  user-select: none;
+  color: var(--l-faint);
+}
+.lin-text {
+  white-space: pre;
+  padding-right: 16px !important;
+  padding-left: 4px !important;
+}
+.lin-row.add td,
+.lin-text.add {
+  background: var(--l-add);
+}
+.lin-row.add .lin-no,
+.lin-no.add {
+  background: var(--l-add-gutter);
+  color: #7fb89a;
+}
+.lin-row.add .lin-sign {
+  color: var(--l-green);
+}
+.lin-row.del td,
+.lin-text.del {
+  background: var(--l-del);
+}
+.lin-row.del .lin-no,
+.lin-no.del {
+  background: var(--l-del-gutter);
+  color: #c58585;
+}
+.lin-row.del .lin-sign {
+  color: var(--l-red);
+}
+.lin-row.add .chg,
+.lin-text.add .chg {
+  background: var(--l-add-word);
+  border-radius: 2px;
+}
+.lin-row.del .chg,
+.lin-text.del .chg {
+  background: var(--l-del-word);
+  border-radius: 2px;
+}
+.lin-row:hover td {
+  filter: brightness(1.15);
+}
+
+.lin-hunk td {
+  background: rgba(94, 106, 210, 0.07);
+  color: var(--l-muted);
+  padding: 4px 12px !important;
+  font-size: 11.5px;
+  border-top: 1px solid var(--l-border-soft);
+  border-bottom: 1px solid var(--l-border-soft);
+}
+.lin-hunk:first-child td {
+  border-top: 0;
+}
+.lin-hunk-range {
+  color: #8b93e8;
+  margin-right: 12px;
+}
+.lin-hunk-ctx {
+  opacity: 0.8;
+}
+
+/* Split */
+.lin-split {
+  table-layout: fixed;
+}
+.lin-split col.c-no {
+  width: 48px;
+}
+.lin-split .lin-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lin-split .lin-no:nth-child(3) {
+  border-left: 1px solid var(--l-border);
+}
+.lin-split .empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 4px,
+    rgba(255, 255, 255, 0.025) 4px 8px
+  );
+}
+
+/* Variant C: file list + one file */
+.lin-c {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--l-border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 360px;
+}
+.lin-tree {
+  background: var(--l-panel);
+  border-right: 1px solid var(--l-border);
+  padding: 12px 8px;
+}
+.lin-tree .lin-summary {
+  margin: 0 6px 8px;
+}
+.lin-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lin-tree-item {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--l-muted);
+  cursor: pointer;
+}
+.lin-tree-item:hover {
+  background: #1d1e21;
+}
+.lin-tree-item.active {
+  background: #222328;
+  color: var(--l-text);
+}
+.lin-tree-item.viewed .lin-tree-name {
+  opacity: 0.5;
+}
+.lin-tree-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  font-size: 12.5px;
+}
+.lin-tree-dir {
+  color: var(--l-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lin-pane {
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--l-bg);
+}
+.lin-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--l-border);
+  background: var(--l-head);
+}
+.lin-viewed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--l-muted);
+  padding: 2px 8px;
+  border: 1px solid var(--l-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lin-viewed input {
+  accent-color: var(--l-accent);
+  margin: 0;
+}
+
+/* The floating variant switcher (not part of the design) */
+.proto-switcher {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: #fff;
+  color: #111;
+  border-radius: 999px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  font:
+    600 13px system-ui,
+    sans-serif;
+}
+.proto-switcher button {
+  all: unset;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+}
+.proto-switcher button:hover {
+  background: #eee;
+}
+.proto-switcher span {
+  padding: 0 10px;
+  min-width: 170px;
+  text-align: center;
+}

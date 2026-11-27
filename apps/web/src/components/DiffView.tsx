@@ -1,3 +1,10 @@
+import {
+  DIFF_VARIANT_NAMES,
+  DIFF_VARIANTS,
+  PrototypeDiff,
+} from './DiffView.prototype.tsx';
+import { PrototypeSwitcher, useVariant } from './PrototypeSwitcher.tsx';
+
 const lineClass = (line: string) => {
   if (
     line.startsWith('diff ') ||
@@ -11,7 +18,7 @@ const lineClass = (line: string) => {
   return '';
 };
 
-export const DiffView = ({ diff }: { diff: string }) => (
+const CurrentDiffView = ({ diff }: { diff: string }) => (
   <pre className="diff">
     {diff ? (
       diff.split('\n').map((line, i) => (
@@ -24,3 +31,23 @@ export const DiffView = ({ diff }: { diff: string }) => (
     )}
   </pre>
 );
+
+// PROTOTYPE: `?variant=` swaps in the Linear-like variants (dev only).
+export const DiffView = ({ diff }: { diff: string }) => {
+  const variant = useVariant(DIFF_VARIANTS, 'A');
+  if (!import.meta.env.DEV) return <CurrentDiffView diff={diff} />;
+  return (
+    <>
+      {variant === 'current' ? (
+        <CurrentDiffView diff={diff} />
+      ) : (
+        <PrototypeDiff diff={diff} variant={variant} />
+      )}
+      <PrototypeSwitcher
+        variants={DIFF_VARIANTS}
+        names={DIFF_VARIANT_NAMES}
+        current={variant}
+      />
+    </>
+  );
+};
