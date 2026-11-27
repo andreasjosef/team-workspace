@@ -52,6 +52,10 @@ _Avoid_: Permissions, write access
 A short record in the product repo of what the team decided, why, and who decided, linked to the files it affects.
 _Avoid_: ADR, rule, policy
 
+**Fixture run**:
+A task the hub starts for a flagged task to show "what if the model had obeyed?": the real pipeline, driven by a scripted hostile proposal fixed in the hub's code instead of the model. It always ends flagged and never opens a pull request.
+_Avoid_: Simulation, replay, dry run
+
 ### Outcomes
 
 **Outcome**:

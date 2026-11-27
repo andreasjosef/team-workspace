@@ -35,7 +35,9 @@ export const TaskPage = () => {
       <OutcomeCard task={t} />
       <section className="message">
         <div className="untrusted-label">
-          The customer's report · treated as untrusted
+          {t.fixtureOf === null
+            ? "The customer's report · treated as untrusted"
+            : "The fixture's script · fixed in the hub's code, not the model"}
         </div>
         <p className="untrusted">{t.input.text}</p>
       </section>

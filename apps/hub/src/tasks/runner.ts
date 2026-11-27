@@ -9,6 +9,10 @@ export type TaskHandle = {
   input: CreateTaskInput;
   policy: RolePolicy;
   rolePrompt: string;
+  // A fixture run: the flagged task it is for. The runner drives it with the
+  // scripted hostile proposal (fixture.ts) instead of the model, and never
+  // publishes it.
+  fixtureOf: string | null;
   emit: (event: TaskEvent) => void;
   setDiff: (diff: string) => void;
 };

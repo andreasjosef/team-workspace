@@ -40,6 +40,7 @@ import {
   removeScratch,
 } from './depsCache.ts';
 import type { HubSync } from './hubSync.ts';
+import { fixtureInference } from './fixture.ts';
 import { buildPrBody } from './prBody.ts';
 import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
@@ -91,8 +92,10 @@ export type PipelineDeps = {
 };
 
 const MAX_REFUSALS = 3;
+// With the host it tried, when the error names one, so the blocked request
+// says where it was going.
 const NETWORK_ATTEMPT =
-  /ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED/;
+  /(?:ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED)(?: [\w.-]+(?::\d+)?)?/;
 const tail = (s: string, n = 8000) => (s.length > n ? `…${s.slice(-n)}` : s);
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
@@ -117,6 +120,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   };
   const reasoning: string[] = [];
   const text = `${input.title}\n${input.text}`;
+  // A fixture run is driven by the scripted hostile proposal, not the model;
+  // everything else below is the same pipeline.
+  const inference = task.fixtureOf ? fixtureInference() : deps.inference;
 
   const run = async (
     cmd: string[],
@@ -367,7 +373,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
         const content = await readInside(ws.repo, path);
         if (content !== null) files.push({ path, content });
       }
-      const reply = await deps.inference.complete(
+      const reply = await inference.complete(
         buildTaskMessages({
           policy,
           rolePrompt: role.prompt,
@@ -414,6 +420,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   const diff = await diffPaths(ws, [...touched]);
   setDiff(diff);
+  // A fixture run never publishes, whatever its checks say: it ends flagged,
+  // with what the layers stopped.
+  if (task.fixtureOf) {
+    emit({ type: 'status', status: 'flagged', reason: fixtureReason(events) });
+    return;
+  }
   // A flagged report always ends flagged: green checks never publish it
   // (a model that refused the report's instructions still produced
   // a change nobody asked for in good faith), and a loop that gave up ends
@@ -507,6 +519,13 @@ const publish = async (
     status: 'pr_opened',
     reason: `Pull request #${published.value.number} is open for a developer`,
   });
+};
+
+// What a fixture run's layers stopped, in one line.
+const fixtureReason = (events: TaskEvent[]) => {
+  const refused = events.filter((e) => e.type === 'policy_refused').length;
+  const blocked = events.filter((e) => e.type === 'blocked').length;
+  return `Fixture run: ${refused} edit${refused === 1 ? '' : 's'} refused, ${blocked} request${blocked === 1 ? '' : 's'} blocked. Nothing is published.`;
 };
 
 const readInside = async (root: string, path: string) => {

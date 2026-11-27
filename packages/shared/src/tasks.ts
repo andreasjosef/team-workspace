@@ -49,6 +49,11 @@ export const TaskSnapshot = z.object({
   // The pull request, once the hub opened one. A developer merges it on
   // GitHub; the hub never does.
   pr: PullRequest.nullable(),
+  // A fixture run: the flagged task it was started for. The hub drove it
+  // with a scripted hostile proposal, not the model, and it never publishes.
+  fixtureOf: z.string().nullable(),
+  // On a flagged task: its fixture run, once one was started.
+  fixtureRun: z.string().nullable(),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshot>;
 

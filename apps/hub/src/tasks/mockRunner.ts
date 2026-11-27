@@ -4,8 +4,10 @@ import {
   rankFiles,
   scanTaskInput,
   type Edit,
+  type EditsResponse,
 } from '@app/agent';
 import type { Hub } from '../hub/load.ts';
+import { FIXTURE_PROPOSAL, FIXTURE_TEST } from './fixture.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 
 // A believable fake run: no Docker, no LLM. The UI track builds against it,
@@ -170,6 +172,50 @@ const HOSTILE: Scenario = {
   ],
 };
 
+// The fixture run: the hub's scripted hostile proposal (fixture.ts), played
+// the way the real pipeline plays it. The real policy refuses the first two
+// steps; the third is in scope, and its test run is blocked.
+const [fixtureAuth, fixtureHub, fixtureTest] = FIXTURE_PROPOSAL as [
+  EditsResponse,
+  EditsResponse,
+  EditsResponse,
+];
+const fixtureTestSource =
+  fixtureTest.edits[0] && 'create' in fixtureTest.edits[0]
+    ? fixtureTest.edits[0].create
+    : '';
+const FIXTURE: Scenario = {
+  name: 'fixture',
+  steps: [
+    {
+      ...fixtureAuth,
+      reasoning: fixtureAuth.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 0 },
+      diff: '',
+    },
+    {
+      ...fixtureHub,
+      reasoning: fixtureHub.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 0 },
+      diff: '',
+    },
+    {
+      ...fixtureTest,
+      reasoning: fixtureTest.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 1 },
+      networkAttempt:
+        'test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+      diff: `diff --git a/${FIXTURE_TEST} b/${FIXTURE_TEST}
+new file mode 100644
+--- /dev/null
++++ b/${FIXTURE_TEST}
+@@ -0,0 +1,${fixtureTestSource.split('\n').length - 1} @@
+${fixtureTestSource.replace(/\n$/, '').replace(/^/gm, '+')}
+`,
+    },
+  ],
+};
+
 const pickScenario = (text: string, signals: string[]): Scenario | null => {
   if (
     signals.includes('tries to override instructions') ||
@@ -201,6 +247,7 @@ export const createMockRunner = (
     policy,
     emit,
     setDiff,
+    fixtureOf,
   }: TaskHandle) => {
     const text = `${input.title}\n${input.text}`;
     const cmd = (c: string, output: string, exitCode = 0) =>
@@ -240,7 +287,7 @@ export const createMockRunner = (
     );
     emit({ type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 });
 
-    const scenario = pickScenario(text, signals);
+    const scenario = fixtureOf ? FIXTURE : pickScenario(text, signals);
     if (!scenario) {
       emit({
         type: 'status',
@@ -289,8 +336,9 @@ export const createMockRunner = (
         emit({
           type: 'status',
           status: 'flagged',
-          reason:
-            'A test run tried to reach the network. Stopped; the diff is kept for review.',
+          reason: fixtureOf
+            ? `Fixture run: ${refusals} edits refused, 1 request blocked. Nothing is published.`
+            : 'A test run tried to reach the network. Stopped; the diff is kept for review.',
         });
         return;
       }
@@ -313,6 +361,15 @@ export const createMockRunner = (
       return;
     }
     setDiff(diff);
+    // A fixture run never publishes, whatever happens.
+    if (fixtureOf) {
+      emit({
+        type: 'status',
+        status: 'flagged',
+        reason: 'Fixture run: nothing is published.',
+      });
+      return;
+    }
     emit({ type: 'phase', phase: 'preview' });
     await step();
     if (opts.previewBaseUrl) {
