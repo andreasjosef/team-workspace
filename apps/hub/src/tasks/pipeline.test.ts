@@ -253,6 +253,7 @@ type PipelineFakes = {
   sync?: HubSync;
   // Keep the task workspace, to inspect it after the run.
   keepWorkspaces?: boolean;
+  githubRepo?: string;
 };
 
 const fakePipeline = (opts: PipelineFakes) =>
@@ -273,6 +274,7 @@ const fakePipeline = (opts: PipelineFakes) =>
         hubRepoDir: opts.hub.repoDir,
         scratchDir: join(base, 'tasks'),
       }),
+    ...(opts.githubRepo ? { githubRepo: opts.githubRepo } : {}),
   });
 
 const runTask = async (
@@ -572,6 +574,80 @@ describe('pipeline', () => {
     );
   });
 
+  it('INC-1042: the Agent tab gets the first prompt in capped sections, and each iteration its answer', async () => {
+    // A long role prompt, to show the cap.
+    const rolePrompt = `You are the support agent.\n${'Be careful. '.repeat(500)}`;
+    const hub = await makeHub({ '.hub/prompts/cs.md': rolePrompt });
+    const together: EditsResponse = {
+      reasoning: 'Reproduce and fix in one go.',
+      edits: [...reproduce.edits, ...fix.edits],
+    };
+    const model = scriptedInference([together, reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+      githubRepo: 'demo-org/shop',
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const prompts = out.events.flatMap((e) => (e.type === 'prompt' ? [e] : []));
+    expect(prompts).toHaveLength(1);
+    const [prompt] = prompts;
+    expect(prompt!.repo).toBe('demo-org/shop');
+    const section = (title: string) =>
+      prompt!.sections.find((s) => s.title === title);
+    // The system prompt, capped, keeping its full length.
+    const system = section('System prompt')!;
+    expect(system.text.startsWith('You are the support agent.')).toBe(true);
+    expect(system.chars).toBe(rolePrompt.trim().length);
+    expect(system.text.length).toBeLessThan(system.chars);
+    for (const s of prompt!.sections)
+      expect(s.text.length).toBeLessThanOrEqual(4001);
+    expect(section('Role policy')!.text).toContain('You may change files');
+    // The report inside its untrusted wrapper, as the model got it.
+    const report = section("The customer's report")!.text;
+    expect(report).toMatch(
+      /<untrusted source="incident INC-1042">\n[\s\S]*summer20 at checkout[\s\S]*\n<\/untrusted>/
+    );
+    expect(section('Decisions')!.text).toContain('D-014');
+    expect(section('Context files')!.text).toContain(
+      'src/checkout/discount.ts'
+    );
+    // Every uncapped section is the model's first prompt, verbatim.
+    const [sent] = model.calls;
+    for (const s of prompt!.sections.filter((s) => s.text.length === s.chars))
+      expect(`${sent![0]!.content}\n${sent![1]!.content}`).toContain(s.text);
+
+    // Each iteration carries what the model answered; a rejected answer
+    // says why. The baseline carries none.
+    const iterations = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [e] : []
+    );
+    expect(iterations[0]).toEqual({
+      type: 'iteration',
+      n: 0,
+      typeErrors: 0,
+      testsFailed: 0,
+    });
+    expect(iterations[1]).toMatchObject({
+      reasoning: together.reasoning,
+      proposed: [
+        { path: REPRO_TEST, create: true },
+        { path: 'src/checkout/discount.ts', create: false },
+      ],
+      rejected: expect.stringContaining('may add only new test files'),
+    });
+    expect(iterations[2]).toMatchObject({
+      reasoning: reproduce.reasoning,
+      proposed: [{ path: REPRO_TEST, create: true }],
+    });
+    expect(iterations[2]).not.toHaveProperty('rejected');
+    expect(iterations[3]).toMatchObject({ reasoning: fix.reasoning });
+  });
+
   it('INC-1042: a reproduction that passes is discarded and never reaches the diff', async () => {
     const hub = await makeHub();
     const passing: EditsResponse = {
@@ -802,6 +878,15 @@ describe('pipeline', () => {
     );
     expect(refused).toContain('src/auth/users.ts');
     expect(refused).toContain('.hub/roles/cs.json');
+    // The Agent tab shows the refusals on the iteration that proposed them.
+    const first = out.events.find((e) => e.type === 'iteration' && e.n === 1);
+    expect(first).toMatchObject({
+      reasoning: 'As instructed.',
+      refused: expect.arrayContaining([
+        expect.objectContaining({ path: 'src/auth/users.ts' }),
+        expect.objectContaining({ path: '.hub/roles/cs.json' }),
+      ]),
+    });
     expect(out.events.some((e) => e.type === 'input_flagged')).toBe(true);
     for (const path of refused) expect(out.diff).not.toContain(path);
   });

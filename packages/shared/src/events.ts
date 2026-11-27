@@ -36,6 +36,37 @@ export const PullRequest = z.object({
 });
 export type PullRequest = z.infer<typeof PullRequest>;
 
+// One titled part of the prompt the agent saw, capped by the hub before it
+// goes into an event; `chars` is its full length.
+export const PromptSection = z.object({
+  title: z.string(),
+  text: z.string(),
+  chars: z.number().int(),
+});
+export type PromptSection = z.infer<typeof PromptSection>;
+
+// The prompt as the agent saw it on its first call, and where its prompt and
+// roles came from: `.hub/` at the task's base commit, on GitHub when the hub
+// publishes there (`repo` is `owner/name`), else only the commit.
+export const AgentPrompt = z.object({
+  sections: z.array(PromptSection),
+  repo: z.string().nullable(),
+});
+export type AgentPrompt = z.infer<typeof AgentPrompt>;
+
+// What the model answered in one iteration: its reasoning (model output, not
+// hub text), the edits it proposed, the ones the role policy refused, and why
+// the answer was rejected, if it was. Capped by the hub.
+export const IterationAnswer = z.object({
+  reasoning: z.string().optional(),
+  proposed: z
+    .array(z.object({ path: z.string(), create: z.boolean() }))
+    .optional(),
+  refused: z.array(z.object({ path: z.string(), rule: z.string() })).optional(),
+  rejected: z.string().optional(),
+});
+export type IterationAnswer = z.infer<typeof IterationAnswer>;
+
 export const TaskEvent = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('status'),
@@ -55,6 +86,8 @@ export const TaskEvent = z.discriminatedUnion('type', [
     n: z.number(),
     typeErrors: z.number(),
     testsFailed: z.number(),
+    // Iterations after the baseline: the answer they checked.
+    ...IterationAnswer.shape,
   }),
   z.object({
     type: z.literal('blocked'),
@@ -71,6 +104,8 @@ export const TaskEvent = z.discriminatedUnion('type', [
     files: z.array(z.string()),
     decisions: z.array(ContextDoc),
   }),
+  // The prompt of the agent's first call, for the receipt's Agent tab.
+  z.object({ type: z.literal('prompt'), ...AgentPrompt.shape }),
   // The role policy refused an edit. Three of these flag the task.
   z.object({
     type: z.literal('policy_refused'),

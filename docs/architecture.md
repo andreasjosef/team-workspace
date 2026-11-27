@@ -88,6 +88,8 @@ What the agent sees, all of it listed on the task's receipt:
 4. Decisions whose `files:` list names one of those files, then decisions whose title matches (`matchDecisions`)
 5. After the first edit: the current errors and the files they point at
 
+The receipt's Agent tab shows the first prompt as the model got it, in titled sections the pipeline caps before they go into the `prompt` event (`promptSections`, built from the same parts as the messages), with a link to `.hub/` at the task's base commit. Each `iteration` event carries the model's reasoning, the edits it proposed, any the policy refused and why an answer wasn't taken. Recorded only: the loop never reads them back.
+
 Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `date`, `by`, `files`), versioned with the code they explain.
 
 ## Containment, and where each rule lives

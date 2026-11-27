@@ -26,6 +26,7 @@ const task = (patch: Partial<TaskSnapshot>): TaskSnapshot => ({
   previewUrl: null,
   hasDiff: true,
   pr: { url: 'https://github.invalid/pull/7', number: 7, draft: false },
+  prompt: null,
   ...patch,
 });
 
