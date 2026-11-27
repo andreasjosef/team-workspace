@@ -1,10 +1,10 @@
 import type { Incident } from '@app/shared';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Dot, Status } from '../components/common.tsx';
 import { ForwardButton } from '../components/ForwardButton.tsx';
 import { OutcomeCard } from '../components/Outcome.tsx';
 import { ReceiptTabs } from '../components/Receipt.tsx';
-import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
 import { useIncidents, useTasks } from '../queries.ts';
 import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
 
@@ -67,6 +67,7 @@ export const CsView = () => {
 const Report = ({ report }: { report: Incident }) => {
   const tasks = useTasks().data ?? [];
   const task = taskForIncident(tasks, report.id);
+  const [autoFocusTaskId, setAutoFocusTaskId] = useState<string | null>(null);
   return (
     <>
       <p className="muted small focus-meta">
@@ -75,14 +76,22 @@ const Report = ({ report }: { report: Incident }) => {
       </p>
       <h1 className="focus-title">{report.subject}</h1>
       {task && <OutcomeCard task={task} />}
-      {task && <ReplyDraftBox task={task} />}
       <section className="message">
         <div className="untrusted-label">
           {report.customer} wrote · treated as untrusted
         </div>
         <p className="untrusted">{report.body}</p>
       </section>
-      {task ? <ReceiptTabs task={task} /> : <ForwardButton report={report} />}
+      {task ? (
+        <ReceiptTabs
+          key={task.id}
+          task={task}
+          autoScroll={task.id === autoFocusTaskId}
+          onAutoScrolled={() => setAutoFocusTaskId(null)}
+        />
+      ) : (
+        <ForwardButton report={report} onStarted={setAutoFocusTaskId} />
+      )}
     </>
   );
 };

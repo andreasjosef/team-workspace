@@ -1,8 +1,21 @@
 import type { RoleSummary, TaskSnapshot } from '@app/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Fragment, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Link } from 'react-router';
 import { api, unwrap } from '../api.ts';
+import { useTaskEvents } from '../hooks/useTaskEvents.ts';
+import {
+  buildReplayCutoffs,
+  derivePipeline,
+  snapshotFromEvents,
+} from '../pipelineView.ts';
 import { useDiff, useRoles, useTask } from '../queries.ts';
 import {
   fixtureLayers,
@@ -11,8 +24,14 @@ import {
   type LayerState,
 } from '../taskView.ts';
 import { AgentView } from './AgentView.tsx';
+import { ChecksView } from './ChecksView.tsx';
 import { DiffView } from './DiffView.tsx';
 import { LiveLog } from './LiveLog.tsx';
+import { PipelineFlow } from './PipelineFlow.tsx';
+import { ReplyDraftBox } from './ReplyDraft.tsx';
+
+type ReceiptTab =
+  'reply' | 'changes' | 'checks' | 'agent' | 'containment' | 'log';
 
 // The receipt: what the agent saw, what it ran, what it changed and what got
 // stopped. It lets a developer trust (or distrust) the change without
@@ -213,48 +232,106 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
   );
 };
 
-const ChecksView = ({ task }: { task: TaskSnapshot }) =>
-  task.iterations.length === 0 ? (
-    <p className="empty">Not run yet</p>
-  ) : (
-    <table className="iters">
-      <thead>
-        <tr>
-          <th>step</th>
-          <th>type errors</th>
-          <th>failing tests</th>
-        </tr>
-      </thead>
-      <tbody>
-        {task.iterations.map((i, k) => (
-          <tr key={k}>
-            <td>{i.n === 0 ? 'baseline' : i.n}</td>
-            <td>{i.typeErrors}</td>
-            <td className={i.testsFailed ? 'tone-red' : ''}>{i.testsFailed}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+const REPLAY_BEAT_MS = 620;
+
+const scrollElementToTop = (el: HTMLElement | null) => {
+  if (!el) return;
+  const scroller = el.closest('.focus');
+  if (scroller && scroller.scrollHeight > scroller.clientHeight + 2) {
+    const top =
+      scroller.scrollTop +
+      el.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    return;
+  }
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+export const ReceiptTabs = ({
+  task,
+  autoScroll = false,
+  onAutoScrolled,
+}: {
+  task: TaskSnapshot;
+  autoScroll?: boolean;
+  onAutoScrolled?: () => void;
+}) => {
+  const [picked, setPicked] = useState<ReceiptTab | null>(null);
+  const [replayStep, setReplayStep] = useState<number | null>(null);
+  const receiptRef = useRef<HTMLElement>(null);
+  const events = useTaskEvents(task.id);
+  const cutoffs = useMemo(() => buildReplayCutoffs(events), [events]);
+
+  const replaying = replayStep !== null && cutoffs.length > 0;
+
+  const focusPipeline = useCallback(() => {
+    requestAnimationFrame(() => scrollElementToTop(receiptRef.current));
+  }, []);
+
+  useEffect(() => {
+    if (!autoScroll) return;
+    focusPipeline();
+    onAutoScrolled?.();
+  }, [autoScroll, focusPipeline, onAutoScrolled]);
+
+  useEffect(() => {
+    if (replayStep === null || cutoffs.length === 0) return;
+    if (replayStep >= cutoffs.length - 1) {
+      const done = setTimeout(() => setReplayStep(null), 900);
+      return () => clearTimeout(done);
+    }
+    const next = setTimeout(
+      () => setReplayStep((s) => (s === null ? null : s + 1)),
+      REPLAY_BEAT_MS
+    );
+    return () => clearTimeout(next);
+  }, [replayStep, cutoffs.length]);
+
+  const visibleEvents = useMemo(
+    () =>
+      replaying
+        ? events.slice(0, cutoffs[Math.min(replayStep, cutoffs.length - 1)]!)
+        : events,
+    [replaying, replayStep, cutoffs, events]
   );
 
-type Tab = 'changes' | 'checks' | 'agent' | 'containment' | 'log';
+  const viewTask = useMemo(
+    () => snapshotFromEvents(task, visibleEvents, { replace: replaying }),
+    [task, visibleEvents, replaying]
+  );
 
-export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
-  const [picked, setPicked] = useState<Tab | null>(null);
-  const diff = useDiff(task.id, task.hasDiff, task.status);
+  const diff = useDiff(task.id, viewTask.hasDiff, task.status);
+  const diffText = viewTask.hasDiff ? (diff.data ?? '') : '';
+  const pipeline = useMemo(
+    () => derivePipeline(viewTask, visibleEvents, diffText),
+    [viewTask, visibleEvents, diffText]
+  );
+
   const flagged =
-    task.inputSignals.length + task.refusals.length + task.blocked.length > 0;
-  // Until the reader picks one: what got stopped for a flagged task, else
-  // the change once there is one, else the log.
-  const tab =
+    viewTask.inputSignals.length +
+      viewTask.refusals.length +
+      viewTask.blocked.length >
+    0;
+
+  // Until the reader picks one: log while running, what got stopped for a
+  // flagged task, else the change once there is one, else the reply draft,
+  // else the log.
+  const tab: ReceiptTab =
     picked ??
-    (task.status === 'flagged'
-      ? 'containment'
-      : task.hasDiff
-        ? 'changes'
-        : 'log');
-  const tabs: { id: Tab; label: string; hidden?: boolean }[] = [
-    { id: 'changes', label: 'Changes', hidden: !task.hasDiff },
+    (pipeline.live
+      ? 'log'
+      : viewTask.status === 'flagged'
+        ? 'containment'
+        : viewTask.hasDiff
+          ? 'changes'
+          : viewTask.replyDraft
+            ? 'reply'
+            : 'log');
+
+  const tabs: { id: ReceiptTab; label: string }[] = [
+    { id: 'reply', label: 'Reply' },
+    { id: 'changes', label: 'Changes' },
     { id: 'checks', label: 'Checks' },
     { id: 'agent', label: 'Agent' },
     { id: 'containment', label: flagged ? 'Containment ●' : 'Containment' },
@@ -262,39 +339,52 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
   ];
 
   return (
-    <section className="receipt">
+    <section className="receipt" ref={receiptRef}>
       <div className="receipt-head">
         <h2>Receipt</h2>
-        {task.pr && (
-          <a className="receipt-pr" href={task.pr.url} rel="noreferrer">
-            Pull request #{task.pr.number}
-            {task.pr.draft ? ' (draft)' : ''}
+        {viewTask.pr && (
+          <a className="receipt-pr" href={viewTask.pr.url} rel="noreferrer">
+            Pull request #{viewTask.pr.number}
+            {viewTask.pr.draft ? ' (draft)' : ''}
           </a>
         )}
         <div className="tabs" role="tablist">
-          {tabs
-            .filter((t) => !t.hidden)
-            .map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={tab === t.id}
-                className={`tab ${tab === t.id ? 'active' : ''} ${
-                  t.id === 'containment' && flagged ? 'tone-red' : ''
-                }`}
-                onClick={() => setPicked(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`tab ${tab === t.id ? 'active' : ''} ${
+                t.id === 'containment' && flagged ? 'tone-red' : ''
+              }`}
+              onClick={() => setPicked(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
+
+      <PipelineFlow
+        model={pipeline}
+        replaying={replaying}
+        canReplay={!pipeline.live && cutoffs.length > 1}
+        onReplay={() => {
+          setReplayStep(0);
+          focusPipeline();
+        }}
+        onStopReplay={() => setReplayStep(null)}
+      />
+
       <div className={`receipt-body ${tab === 'changes' ? 'flush' : ''}`}>
-        {tab === 'changes' && <DiffView diff={diff.data ?? ''} />}
-        {tab === 'checks' && <ChecksView task={task} />}
-        {tab === 'agent' && <AgentView task={task} />}
-        {tab === 'containment' && <ContainmentView task={task} />}
-        {tab === 'log' && <LiveLog key={task.id} taskId={task.id} />}
+        {tab === 'reply' && <ReplyDraftBox task={viewTask} />}
+        {tab === 'changes' && <DiffView diff={diffText} />}
+        {tab === 'checks' && <ChecksView task={viewTask} />}
+        {tab === 'agent' && <AgentView task={viewTask} />}
+        {tab === 'containment' && <ContainmentView task={viewTask} />}
+        {tab === 'log' && (
+          <LiveLog key={task.id} taskId={task.id} events={visibleEvents} />
+        )}
       </div>
     </section>
   );

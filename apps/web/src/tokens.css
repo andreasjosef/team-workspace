@@ -6,27 +6,28 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces */
-  --bg: #131311;
-  --bg-mid: #1c1c1a; /* sidebars, code blocks */
-  --bg-soft: #262626; /* floats, menus, borders, hovered rows */
-  --bg-hover: #3a3935; /* hovered row inside a bg-soft surface */
+  /* Surfaces: one flat dark background, subtle neutral lifts for cards */
+  --bg: #111111;
+  --bg-mid: #1a1a1a; /* small cards, code blocks */
+  --bg-soft: #232323; /* elevated/nested cards, chips, buttons, hovered cards */
+  --bg-hover: #2d2d2d; /* selected cards, hovered controls */
 
-  /* Text */
-  --faint: #505050;
-  --muted: #928374;
-  --text: #d4c9af; /* all text, from bitverkstad.css */
+  /* Text: one monochrome neutral family */
+  --faint: #555553;
+  --muted: #8a8a88;
+  --text: #e2e2e0;
+  --text-strong: #e2e2e0;
 
-  /* Accent and meaning */
-  --gold: #d79921; /* the accent: active, selected, focused; warnings */
-  --red: #ea6962; /* errors, danger */
-  --green: #a9b665; /* success, additions */
-  --blue: #7daea3; /* links, info */
-  --purple: #d3869b; /* constants, special */
-  --cyan: #89b482; /* hints */
+  /* Optional semantic accents (reserved for intentional opt-in highlights) */
+  --gold: #d79921;
+  --red: #ea6962;
+  --green: #a9b665;
+  --blue: #7daea3;
+  --purple: #d3869b;
+  --cyan: #89b482;
 
-  --selection: rgba(215, 153, 33, 0.25);
-  --highlight: rgba(215, 153, 33, 0.4);
+  --selection: rgba(255, 255, 255, 0.14);
+  --highlight: rgba(255, 255, 255, 0.18);
 
   /* Type */
   --font-text: 'Atkinson Hyperlegible Next', 'Inter', system-ui, sans-serif;
@@ -36,11 +37,13 @@
   --line-height: 1.6;
   --unit: calc(1rem * var(--line-height)); /* one line of body text */
 
-  --radius: 6px;
+  --radius: 10px;
+  --radius-sm: 6px;
 }
 
 /* Base */
-html {
+html,
+body {
   background: var(--bg);
   color: var(--text);
 }
@@ -56,11 +59,12 @@ body {
 }
 
 a {
-  color: var(--blue);
+  color: var(--text);
   text-decoration-color: var(--faint);
 }
 a:hover {
-  color: var(--gold);
+  color: var(--text);
+  text-decoration-color: var(--text);
 }
 
 /* Space only below blocks, so gaps never double */
@@ -94,10 +98,6 @@ h3 {
   font-weight: 650;
   margin-top: calc(var(--unit) * 1.25);
 }
-:is(h1, h2) {
-  border-bottom: 1px solid var(--bg-soft);
-  padding-bottom: 0.2em;
-}
 
 /* Code: terminal font and spacing; blocks scroll rather than wrap */
 code,
@@ -115,9 +115,9 @@ pre {
   overflow-x: auto;
 }
 :not(pre) > code {
-  background: var(--bg-mid);
+  background: var(--bg-soft);
   padding: 0.1em 0.35em;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 mark {
   background: var(--highlight);
@@ -126,5 +126,6 @@ mark {
 
 hr {
   border: 0;
-  border-top: 1px solid var(--bg-soft);
+  height: 0;
+  margin: var(--unit) 0;
 }

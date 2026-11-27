@@ -2,7 +2,6 @@ import { Link, useParams } from 'react-router';
 import { Status } from '../components/common.tsx';
 import { OutcomeCard } from '../components/Outcome.tsx';
 import { ReceiptTabs } from '../components/Receipt.tsx';
-import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
 import { useTask } from '../queries.ts';
 
 // One task on its own page, linkable from anywhere. Same
@@ -34,7 +33,6 @@ export const TaskPage = () => {
         <Status status={t.status} />
       </div>
       <OutcomeCard task={t} />
-      <ReplyDraftBox task={t} />
       <section className="message">
         <div className="untrusted-label">
           {t.fixtureOf === null
@@ -43,7 +41,7 @@ export const TaskPage = () => {
         </div>
         <p className="untrusted">{t.input.text}</p>
       </section>
-      <ReceiptTabs task={t} />
+      <ReceiptTabs key={t.id} task={t} />
     </main>
   );
 };
