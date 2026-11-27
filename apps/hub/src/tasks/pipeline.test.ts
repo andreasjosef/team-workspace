@@ -813,7 +813,7 @@ describe('pipeline', () => {
     ]);
   });
 
-  it('an empty reply reaches the log with its finish_reason', async () => {
+  it('a failed call gets its model-call line too, naming the finish_reason and usage', async () => {
     const hub = await makeHub();
     const model = scriptedInference([reproduce, fix]);
     const complete = model.inference.complete;
@@ -823,7 +823,7 @@ describe('pipeline', () => {
         first = false;
         return fail(
           'unavailable',
-          'Inference returned no content (finish_reason: length)'
+          'Inference returned no content (finish_reason: length; tokens 1500 prompt, 0 completion, 1500 total)'
         );
       }
       return complete(messages);
@@ -839,11 +839,19 @@ describe('pipeline', () => {
     const logs = out.events.flatMap((e) =>
       e.type === 'log' ? [e.message] : []
     );
-    expect(logs.some((m) => m.includes('finish_reason: length'))).toBe(true);
-    // The failed call isn't logged as an answered one.
-    expect(logs.filter((m) => m.startsWith('Model call:'))).toHaveLength(
-      model.calls.length + model.draftCalls.length
+    // One line per model call: the failed one first, then the answered
+    // ones (the fix loop's, and the reply draft's).
+    const callLogs = logs.filter((m) => m.startsWith('Model call:'));
+    expect(callLogs).toHaveLength(
+      1 + model.calls.length + model.draftCalls.length
     );
+    expect(callLogs[0]).toBe(
+      'Model call: failed (Inference returned no content (finish_reason: length; tokens 1500 prompt, 0 completion, 1500 total))'
+    );
+    expect(callLogs.slice(1)).toEqual([
+      ...model.calls.map(() => SCRIPTED_CALL_LOG),
+      DRAFT_CALL_LOG.message,
+    ]);
   });
 
   it('runs each check as one sandbox call with no network, counting what it printed', async () => {
@@ -1621,6 +1629,8 @@ describe('reply draft', () => {
 
     expect(out.status).toBe('pr_opened');
     expect(afterStatus(out.events)).toEqual([
+      // The failed call gets its model-call line, as an answered one does.
+      { type: 'log', message: 'Model call: failed (Inference answered 503)' },
       {
         type: 'log',
         message: 'Reply draft: the template (Inference answered 503)',

@@ -64,6 +64,9 @@ describe('createInference', () => {
       if (!out.success) {
         expect(out.code).toBe('unavailable');
         expect(out.message).toContain(`finish_reason: ${reason}`);
+        expect(out.message).toContain(
+          'tokens 1200 prompt, 0 completion, 1200 total'
+        );
       }
     }
     const silent = stubFetch({ choices: [{ message: {} }] });

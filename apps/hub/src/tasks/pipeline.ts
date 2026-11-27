@@ -122,11 +122,6 @@ const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 const MAX_PROMPT_SECTION_CHARS = 4000;
 const MAX_REASONING_CHARS = 2000;
 const MAX_REJECTION_CHARS = 1000;
-// The loop's own note for an answer that was checked and then not taken (a
-// reproduction that didn't fail; fixLoop.ts). An answer refused before the
-// sandbox has no iteration: its notes (`Model call k: …`) and refusals stay
-// log and `policy_refused` events.
-const REJECTION_NOTE = /^Iteration \d+: answer rejected \((.*)\)$/s;
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
@@ -178,17 +173,20 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   },
 });
 
-// Each answered model call leaves one log line: why the reply ended and what
-// it cost (`finish_reason`, token usage). A failed call needs none of its
-// own: its message (an empty reply's names the finish_reason) reaches the
-// log as a rejected answer or a template fallback.
+// Each model call leaves one log line: why the reply ended and what it cost
+// (`finish_reason`, token usage). A failed call's line carries its message,
+// which for an empty reply names the finish_reason and the usage.
 const withCallLog = (
   inference: Inference,
   log: (message: string) => void
 ): Inference => ({
   complete: async (messages) => {
     const reply = await inference.complete(messages);
-    if (reply.success) log(describeCompletion(reply.value));
+    log(
+      reply.success
+        ? describeCompletion(reply.value)
+        : `Model call: failed (${reply.message})`
+    );
     return reply;
   },
 });
@@ -567,21 +565,21 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       });
       return ok(null);
     },
-    onIteration: (n, c) => {
+    // `rejected`: the check ran, then its answer was not taken (a
+    // reproduction that didn't fail). An answer refused before the sandbox
+    // has no iteration: its notes and refusals stay log and
+    // `policy_refused` events.
+    onIteration: (n, c, rejected) => {
       emit({
         type: 'iteration',
         n,
         typeErrors: c.typeErrors,
         testsFailed: c.testsFailed,
         ...answer,
+        ...(rejected ? { rejected: head(rejected, MAX_REJECTION_CHARS) } : {}),
       });
     },
-    onNote: (message) => {
-      const rejected = REJECTION_NOTE.exec(message);
-      if (rejected?.[1])
-        answer.rejected = head(rejected[1], MAX_REJECTION_CHARS);
-      emit({ type: 'log', message });
-    },
+    onNote: (message) => emit({ type: 'log', message }),
   });
 
   const diff = await diffPaths(ws, [...touched]);
