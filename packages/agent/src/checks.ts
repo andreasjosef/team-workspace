@@ -17,6 +17,13 @@ export const countFailedTests = (vitestOutput: string, exitCode: number) => {
   return exitCode === 0 ? 0 : 1;
 };
 
+// Whether at least one test ran and failed: Vitest's "Tests  N failed". Not
+// a suite that didn't load ("Test Files  1 failed" with "Tests  no tests")
+// and not a run that crashed before its summary. A test that throws inside
+// the code under test is a failed test, so it counts.
+export const someTestFailed = (vitestOutput: string) =>
+  Number(/Tests\s+(\d+)\s+failed/.exec(vitestOutput)?.[1] ?? 0) > 0;
+
 // "src/user.ts(12,5): error TS2339" and "src/user.ts:12:5 - error TS2339".
 // Vitest prints " ❯ src/user.test.ts:4:10". Only relative source paths; the
 // caller still resolves each one inside the workspace.
@@ -124,16 +131,23 @@ export const splitCheckOutput = (output: string): SplitCheck => {
 
 // The combined run as counts for the burn-down chart and errors for the
 // model. A tool that exited non-zero counts at least one, so a crash is never
-// a pass; neither are broken markers.
+// a pass; neither are broken markers. `someTestFailed` is the one fact the
+// counts can't carry: whether a test really failed (see someTestFailed).
+// Broken markers never say so, since a test could print the summary itself.
 export const readCheckOutput = (
   output: string
-): CheckCounts & { errors: string; testOutput: string } => {
+): CheckCounts & {
+  someTestFailed: boolean;
+  errors: string;
+  testOutput: string;
+} => {
   const clean = stripAnsi(output);
   const split = splitCheckOutput(clean);
   if (!split.intact)
     return {
       typeErrors: countTypeErrors(clean),
       testsFailed: 1,
+      someTestFailed: false,
       errors:
         `The check's output was cut off or malformed, so it counts as failing.\n${topErrors(clean)}`.trim(),
       testOutput: clean,
@@ -159,6 +173,7 @@ export const readCheckOutput = (
       countFailedTests(vitest.output, vitest.exitCode),
       vitest.exitCode
     ),
+    someTestFailed: someTestFailed(vitest.output),
     errors: `${errorsOf(tsc, 'tsc')}\n${errorsOf(vitest, 'vitest')}`.trim(),
     testOutput: vitest.output,
   };

@@ -761,7 +761,13 @@ describe('pipeline', () => {
     const hub = await makeHub();
     const sandbox = fakeSandbox({
       'npm install': 'added 42 packages',
-      [CHECK]: [check(0), check(1, { typeErrors: 2 }), check(0)],
+      // The type errors are there from the start: a reproduction that adds
+      // type errors is discarded.
+      [CHECK]: [
+        check(0, { typeErrors: 2 }),
+        check(1, { typeErrors: 2 }),
+        check(0),
+      ],
     });
     const model = scriptedInference([reproduce, fix]);
 
@@ -786,7 +792,7 @@ describe('pipeline', () => {
       e.type === 'iteration' ? [[e.typeErrors, e.testsFailed]] : []
     );
     expect(counts).toEqual([
-      [0, 0],
+      [2, 0],
       [2, 1],
       [0, 0],
     ]);
@@ -796,8 +802,9 @@ describe('pipeline', () => {
     const hub = await makeHub();
     const sandbox = fakeSandbox({
       'npm install': 'added 42 packages',
+      // Type errors from the start, as above.
       [CHECK]: [
-        check(0),
+        check(0, { typeErrors: 2 }),
         check(1, {
           typeErrors: 2,
           testOutput:

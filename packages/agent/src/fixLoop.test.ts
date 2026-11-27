@@ -1,10 +1,10 @@
 import { fail, ok } from '@app/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { EditsResponse } from './edits.ts';
-import { runTaskLoop, type TaskStep } from './fixLoop.ts';
+import { runTaskLoop, type CheckOutcome, type TaskStep } from './fixLoop.ts';
 
 const edit = { edits: [{ path: 'src/a.ts', search: 'a', replace: 'b' }] };
-const clean = { typeErrors: 0, testsFailed: 0 };
+const clean = { typeErrors: 0, testsFailed: 0, someTestFailed: false };
 
 // ---- A bug task against a fake worktree ----------------------------------
 
@@ -16,13 +16,41 @@ const together: EditsResponse = {
   edits: [...reproduction.edits, ...edit.edits],
 };
 
+// What the check shows while the reproduction is in the worktree and the
+// fix isn't: a test failing on an assertion (or a crash in the code under
+// test, which reads the same), a passing test, a test that adds a type
+// error, or a test file that doesn't load.
+const reproChecks = {
+  fails: {
+    typeErrors: 0,
+    testsFailed: 1,
+    someTestFailed: true,
+    errors: 'AssertionError: expected 9 to be 8',
+  },
+  passes: { ...clean, errors: '' },
+  typeError: {
+    typeErrors: 1,
+    testsFailed: 1,
+    someTestFailed: true,
+    errors: `${REPRO}(3,20): error TS2339: Property 'email' does not exist.`,
+  },
+  doesNotLoad: {
+    typeErrors: 0,
+    testsFailed: 1,
+    someTestFailed: false,
+    errors: "Error: Cannot find module './missing.ts'",
+  },
+} satisfies Record<string, CheckOutcome>;
+
 // The worktree is a set of paths. Tests fail while the reproduction is in it
-// and the fix (an edit to src/a.ts) isn't, unless `reproFails` is false.
-// `answers` are the model's replies in order; the last one repeats.
+// and the fix (an edit to src/a.ts) isn't, unless `reproFails` is false;
+// `repro` picks what else that check shows. `answers` are the model's
+// replies in order; the last one repeats.
 const bugTask = async (
   answers: EditsResponse[],
   {
     reproFails = true,
+    repro = 'fails' as keyof typeof reproChecks,
     discardFails = false,
     rules = { maxIterations: 6, patience: 2 },
   } = {}
@@ -36,12 +64,10 @@ const bugTask = async (
   const curve: number[] = [];
   const discarded: string[][] = [];
   const result = await runTaskLoop({
-    check: async () => ({
-      typeErrors: 0,
-      testsFailed:
-        reproFails && files.has(REPRO) && !files.has('src/a.ts') ? 1 : 0,
-      errors: '',
-    }),
+    check: async () =>
+      files.has(REPRO) && !files.has('src/a.ts')
+        ? reproChecks[reproFails ? repro : 'passes']
+        : { ...clean, errors: '' },
     propose: async ({ step, reproduction, lastRejection }) => {
       asked.push({ step, reproduction, lastRejection });
       return ok(answers[Math.min(asked.length - 1, answers.length - 1)]!);
@@ -116,6 +142,72 @@ describe('runTaskLoop, bug task', () => {
     });
   });
 
+  it('discards a reproduction that adds type errors, and names them', async () => {
+    const bug = await bugTask([reproduction], {
+      repro: 'typeError',
+      rules: { maxIterations: 2, patience: 5 },
+    });
+    // More tests fail, but the reproduction would be locked with a type
+    // error in it, and the run could never go green. Its check stays on the
+    // curve.
+    expect(bug.curve).toEqual([0, 1, 1]);
+    expect(bug.discarded).toEqual([[REPRO], [REPRO]]);
+    expect(bug.files.size).toBe(0);
+    const rejection = bug.asked[1]?.lastRejection;
+    expect(rejection).toMatch(/must not add type errors/);
+    expect(rejection).toContain('error TS2339');
+    expect(rejection).toContain(`Discarded: ${REPRO}`);
+    expect(rejection).not.toMatch(/must fail before the fix/);
+    expect(bug.asked.map((a) => a.step)).toEqual(['reproduce', 'reproduce']);
+    expect(bug.result).toMatchObject({ status: 'gave_up', applied: 0 });
+  });
+
+  it("discards a reproduction whose test file didn't load, and gives the load error", async () => {
+    const bug = await bugTask([reproduction], {
+      repro: 'doesNotLoad',
+      rules: { maxIterations: 2, patience: 5 },
+    });
+    // The count rose (a suite that doesn't load counts as a failure), but no
+    // test ran, so nothing was reproduced.
+    expect(bug.curve).toEqual([0, 1, 1]);
+    expect(bug.discarded).toEqual([[REPRO], [REPRO]]);
+    const rejection = bug.asked[1]?.lastRejection;
+    expect(rejection).toMatch(/must fail a test, but no test failed/);
+    expect(rejection).toContain("Cannot find module './missing.ts'");
+    expect(rejection).not.toMatch(/type errors/);
+    expect(bug.result).toMatchObject({ status: 'gave_up', applied: 0 });
+  });
+
+  it('accepts a crash in the code under test: it fails a test', async () => {
+    const crash: CheckOutcome = {
+      typeErrors: 0,
+      testsFailed: 1,
+      someTestFailed: true,
+      errors:
+        "TypeError: Cannot read properties of undefined (reading 'reduce')",
+    };
+    const asked: { step?: TaskStep; lastRejection?: string }[] = [];
+    const checks = [crash, { ...clean, errors: '' }];
+    const result = await runTaskLoop({
+      check: async () => checks.shift()!,
+      first: { ...clean, errors: '' },
+      propose: async ({ step, lastRejection }) => {
+        asked.push({ step, lastRejection });
+        return ok(asked.length === 1 ? reproduction : edit);
+      },
+      apply: async () => ok(null),
+      reproduceFirst: true,
+      discard: async () => fail('invalid', 'should not discard'),
+      onIteration: () => {},
+      baseline: clean,
+    });
+    expect(asked).toEqual([
+      { step: 'reproduce', lastRejection: undefined },
+      { step: 'fix', lastRejection: undefined },
+    ]);
+    expect(result).toMatchObject({ status: 'green', applied: 2 });
+  });
+
   it('says so when a reproduction could not be discarded', async () => {
     const bug = await bugTask([reproduction], {
       reproFails: false,
@@ -182,6 +274,7 @@ describe('runTaskLoop, bug task', () => {
       check: async () => ({
         typeErrors: 0,
         testsFailed: counts.shift()!,
+        someTestFailed: false,
         errors: '',
       }),
       propose: async ({ step }) => {
@@ -205,6 +298,7 @@ describe('runTaskLoop', () => {
       check: async () => ({
         typeErrors: 0,
         testsFailed: counts.shift()!,
+        someTestFailed: false,
         errors: '',
       }),
       propose: async () => ok(edit),
@@ -228,10 +322,10 @@ describe('runTaskLoop', () => {
       const iterations: [number, number][] = [];
       const check = async () => {
         calls.push('check');
-        return { typeErrors: 0, testsFailed: counts.shift()!, errors: '' };
+        return { ...clean, testsFailed: counts.shift()!, errors: '' };
       };
       const first = handFirstIn
-        ? { typeErrors: 0, testsFailed: counts.shift()!, errors: '' }
+        ? { ...clean, testsFailed: counts.shift()!, errors: '' }
         : undefined;
       const result = await runTaskLoop({
         check,
