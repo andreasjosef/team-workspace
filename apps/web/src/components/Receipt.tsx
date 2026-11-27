@@ -1,6 +1,6 @@
-import type { RoleSummary, TaskSnapshot } from '@app/shared';
+import type { EventEnvelope, RoleSummary, TaskSnapshot } from '@app/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { api, unwrap } from '../api.ts';
 import { useDiff, useRoles, useTask } from '../queries.ts';
@@ -9,10 +9,11 @@ import {
   taskLayers,
   type Layer,
   type LayerState,
+  type Tone,
 } from '../taskView.ts';
-import { AgentView } from './AgentView.tsx';
 import { DiffView } from './DiffView.tsx';
 import { LiveLog } from './LiveLog.tsx';
+import { RunView } from './RunView.tsx';
 
 // The receipt: what the agent saw, what it ran, what it changed and what got
 // stopped. It lets a developer trust (or distrust) the change without
@@ -63,7 +64,7 @@ const RoleScope = ({ role }: { role: RoleSummary }) => (
 // The label a fixture run carries wherever it appears.
 export const FixtureLabel = ({ task }: { task: TaskSnapshot }) =>
   task.fixtureOf === null ? null : (
-    <p className="alert tab-lead">
+    <p className="card card-edge edge-red tab-lead">
       <strong>Fixture: a scripted hostile proposal, not the model.</strong> The
       hub replayed a fixed proposal through the real role policy, sandbox and
       patch check. It never publishes.{' '}
@@ -71,13 +72,14 @@ export const FixtureLabel = ({ task }: { task: TaskSnapshot }) =>
     </p>
   );
 
-const layerTone: Record<LayerState, string> = {
-  flagged: 'tone-green',
-  refused: 'tone-green',
-  blocked: 'tone-green',
+// Green means the layer did its job and stopped something.
+const layerTone: Record<LayerState, Tone> = {
+  flagged: 'green',
+  refused: 'green',
+  blocked: 'green',
   'not fired': 'muted',
   'not reached': 'muted',
-  waiting: 'tone-blue',
+  waiting: 'blue',
 };
 
 // "What if the model had obeyed?" on a flagged task: starts its fixture run,
@@ -90,8 +92,8 @@ const FixtureRun = ({ task }: { task: TaskSnapshot }) => {
   });
   const fixtureId = task.fixtureRun ?? start.data?.taskId ?? null;
   return (
-    <section className="tab-lead">
-      <h3>What if the model had obeyed?</h3>
+    <section className="containment-part">
+      <div className="card-label">What if the model had obeyed?</div>
       {fixtureId ? (
         <FixtureResult task={task} fixtureId={fixtureId} />
       ) : (
@@ -117,17 +119,15 @@ const FixtureRun = ({ task }: { task: TaskSnapshot }) => {
 };
 
 const LayerList = ({ layers }: { layers: Layer[] }) => (
-  <dl className="kv">
+  <ol className="layers">
     {layers.map((l) => (
-      <Fragment key={l.name}>
-        <dt>{l.name}</dt>
-        <dd>
-          <span className={layerTone[l.state]}>{l.state}</span>
-          {l.detail && <span className="muted"> · {l.detail}</span>}
-        </dd>
-      </Fragment>
+      <li key={l.name} className="layer">
+        <span className="layer-name">{l.name}</span>
+        <span className={`pill pill-${layerTone[l.state]}`}>{l.state}</span>
+        {l.detail && <span className="layer-detail">{l.detail}</span>}
+      </li>
     ))}
-  </dl>
+  </ol>
 );
 
 const FixtureResult = ({
@@ -161,49 +161,39 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
   return (
     <>
       <FixtureLabel task={task} />
-      <h3>{task.fixtureOf === null ? 'This task' : 'The fixture run'}</h3>
+      <div className="card-label">
+        {task.fixtureOf === null
+          ? 'Each layer on this task'
+          : 'The fixture run'}
+      </div>
       <LayerList layers={taskLayers(task)} />
       {!clean && (
-        <div className="alert tab-lead">
-          {task.inputSignals.length > 0 && (
-            <>
-              <strong>The report looks like it carries instructions</strong>
-              <ul>
-                {task.inputSignals.map((s) => (
-                  <li key={s}>{s}</li>
-                ))}
-              </ul>
-            </>
-          )}
-          {task.refusals.length > 0 && (
-            <>
-              <strong>Edits refused by the {task.input.role} policy</strong>
-              <ul>
-                {task.refusals.map((r, i) => (
-                  <li key={i}>
-                    <code>{r.path}</code>{' '}
-                    <span className="muted">({r.rule})</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {task.blocked.length > 0 && (
-            <>
-              <strong>Blocked by the sandbox</strong>
-              <ul>
-                {task.blocked.map((b, i) => (
-                  <li key={i}>{b}</li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
+        <section className="containment-part">
+          <div className="card-label">Everything stopped</div>
+          <ul className="stopped-list">
+            {task.inputSignals.map((sig) => (
+              <li key={sig}>
+                <span className="muted">Report:</span> {sig}
+              </li>
+            ))}
+            {task.refusals.map((r, i) => (
+              <li key={i}>
+                <span className="muted">Refused:</span> <code>{r.path}</code>{' '}
+                <span className="muted">({r.rule})</span>
+              </li>
+            ))}
+            {task.blocked.map((b, i) => (
+              <li key={i}>
+                <span className="muted">Blocked:</span> {b}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {task.status === 'flagged' && task.fixtureOf === null && (
         <FixtureRun task={task} />
       )}
-      <p className="muted small">
+      <p className="muted small containment-part">
         One throwaway container per command, with no secrets. Checks and fixes
         run with no network at all; only installs go out, through the egress
         proxy's allowlist.
@@ -213,33 +203,15 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
   );
 };
 
-const ChecksView = ({ task }: { task: TaskSnapshot }) =>
-  task.iterations.length === 0 ? (
-    <p className="empty">Not run yet</p>
-  ) : (
-    <table className="iters">
-      <thead>
-        <tr>
-          <th>step</th>
-          <th>type errors</th>
-          <th>failing tests</th>
-        </tr>
-      </thead>
-      <tbody>
-        {task.iterations.map((i, k) => (
-          <tr key={k}>
-            <td>{i.n === 0 ? 'baseline' : i.n}</td>
-            <td>{i.typeErrors}</td>
-            <td className={i.testsFailed ? 'tone-red' : ''}>{i.testsFailed}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+type Tab = 'changes' | 'run' | 'containment' | 'log';
 
-type Tab = 'changes' | 'checks' | 'agent' | 'containment' | 'log';
-
-export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
+export const ReceiptTabs = ({
+  task,
+  events,
+}: {
+  task: TaskSnapshot;
+  events?: EventEnvelope[];
+}) => {
   const [picked, setPicked] = useState<Tab | null>(null);
   const diff = useDiff(task.id, task.hasDiff, task.status);
   const flagged =
@@ -255,8 +227,7 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
         : 'log');
   const tabs: { id: Tab; label: string; hidden?: boolean }[] = [
     { id: 'changes', label: 'Changes', hidden: !task.hasDiff },
-    { id: 'checks', label: 'Checks' },
-    { id: 'agent', label: 'Agent' },
+    { id: 'run', label: 'Run' },
     { id: 'containment', label: flagged ? 'Containment ●' : 'Containment' },
     { id: 'log', label: 'Log' },
   ];
@@ -264,13 +235,6 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
   return (
     <section className="receipt">
       <div className="receipt-head">
-        <h2>Receipt</h2>
-        {task.pr && (
-          <a className="receipt-pr" href={task.pr.url} rel="noreferrer">
-            Pull request #{task.pr.number}
-            {task.pr.draft ? ' (draft)' : ''}
-          </a>
-        )}
         <div className="tabs" role="tablist">
           {tabs
             .filter((t) => !t.hidden)
@@ -291,10 +255,11 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
       </div>
       <div className={`receipt-body ${tab === 'changes' ? 'flush' : ''}`}>
         {tab === 'changes' && <DiffView diff={diff.data ?? ''} />}
-        {tab === 'checks' && <ChecksView task={task} />}
-        {tab === 'agent' && <AgentView task={task} />}
+        {tab === 'run' && <RunView task={task} />}
         {tab === 'containment' && <ContainmentView task={task} />}
-        {tab === 'log' && <LiveLog key={task.id} taskId={task.id} />}
+        {tab === 'log' && (
+          <LiveLog key={task.id} taskId={task.id} events={events} />
+        )}
       </div>
     </section>
   );

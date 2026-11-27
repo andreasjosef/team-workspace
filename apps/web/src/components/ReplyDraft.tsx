@@ -7,7 +7,11 @@ import { replyDraftLabel } from '../taskView.ts';
 // anything. Shown as plain text in a text box, never rendered.
 export const ReplyDraftBox = ({ task }: { task: TaskSnapshot }) => {
   const draft = task.replyDraft;
-  if (!draft) return null;
+  if (!draft) {
+    return (
+      <p className="empty">The reply draft appears once the task finishes.</p>
+    );
+  }
   // A new draft starts a fresh box; edits to the old one don't carry over.
   return (
     <Editor key={draft.text} text={draft.text} label={replyDraftLabel(draft)} />
@@ -24,9 +28,9 @@ const Editor = ({ text, label }: { text: string; label: string }) => {
     );
   return (
     <section className="reply-draft" aria-label="Reply to the customer">
-      <div className="reply-draft-head">
-        <h2>Reply to the customer</h2>
-        <span className="muted small">{label}</span>
+      <div className="card-label">
+        You · reply to the customer
+        <span className="card-label-end">{label}</span>
       </div>
       <textarea
         className="reply-draft-text"
@@ -39,7 +43,9 @@ const Editor = ({ text, label }: { text: string; label: string }) => {
         }}
       />
       <div className="actions">
-        <button onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+        <button className="btn" onClick={copy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
         <span className="muted small">
           The hub never sends it: check it, then paste it into your reply.
         </span>

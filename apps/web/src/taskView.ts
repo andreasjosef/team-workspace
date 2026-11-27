@@ -1,4 +1,9 @@
-import type { Role, TaskSnapshot, TaskStatus } from '@app/shared';
+import type {
+  EventEnvelope,
+  Role,
+  TaskSnapshot,
+  TaskStatus,
+} from '@app/shared';
 
 // Pure helpers behind the views: what each status looks like, and the task
 // in plain words. Kept out of the components so they're testable.
@@ -229,4 +234,147 @@ const layers = (
       detail: blocked ? blocked.slice('network: '.length) : null,
     },
   ];
+};
+
+// The Run tab: each check as one step, with what happened in a word. The
+// verdicts follow the fix loop's rules (packages/agent/src/fixLoop.ts): a
+// bug is reproduced (more tests fail than at the baseline) before it's
+// fixed, and an answer that was rejected or refused leaves the counts as
+// they were. Read from the snapshot only, never from the model's words.
+export type StepVerdict =
+  | 'baseline'
+  | 'reproduced'
+  | 'green'
+  | 'better'
+  | 'worse'
+  | 'no change'
+  | 'rejected'
+  | 'refused';
+
+export type RunStep = {
+  n: number;
+  typeErrors: number;
+  testsFailed: number;
+  verdict: StepVerdict;
+  tone: Tone;
+};
+
+const verdictTone: Record<StepVerdict, Tone> = {
+  baseline: 'muted',
+  reproduced: 'gold',
+  green: 'green',
+  better: 'blue',
+  worse: 'red',
+  'no change': 'muted',
+  rejected: 'muted',
+  refused: 'red',
+};
+
+export const runSteps = (t: TaskSnapshot): RunStep[] => {
+  const [baseline] = t.iterations;
+  let repro = false;
+  return t.iterations.map((it, k) => {
+    const prev = t.iterations[k - 1];
+    const verdict: StepVerdict = ((): StepVerdict => {
+      if (k === 0 || !baseline || !prev) return 'baseline';
+      if (it.refused?.length) return 'refused';
+      if (it.rejected) return 'rejected';
+      if (!repro && it.testsFailed > baseline.testsFailed) {
+        repro = true;
+        return 'reproduced';
+      }
+      if (it.testsFailed === 0 && it.typeErrors === 0) return 'green';
+      const before = prev.testsFailed + prev.typeErrors;
+      const after = it.testsFailed + it.typeErrors;
+      return after < before ? 'better' : after > before ? 'worse' : 'no change';
+    })();
+    return {
+      n: it.n,
+      typeErrors: it.typeErrors,
+      testsFailed: it.testsFailed,
+      verdict,
+      tone: verdictTone[verdict],
+    };
+  });
+};
+
+// The conversation's timeline: the milestones of a task's event stream, in
+// the rep's words. Only what changes the story makes it in; the rest is on
+// the Agent view. Decided on event types and counts, never on model text.
+export type ThreadEvent = { seq: number; at: string; text: string; tone: Tone };
+
+export const threadEvents = (events: EventEnvelope[]): ThreadEvent[] => {
+  const out: ThreadEvent[] = [];
+  const add = (e: EventEnvelope, text: string, tone: Tone) =>
+    out.push({ seq: e.seq, at: e.at, text, tone });
+  let baseline: number | null = null;
+  let repro = false;
+  let green = false;
+  // After anything was stopped, passing checks aren't good news on their
+  // own, so they read neutral.
+  let stopped = false;
+  for (const env of events) {
+    const e = env.event;
+    if (out.length === 0) add(env, 'Forwarded to the agent', 'muted');
+    switch (e.type) {
+      case 'input_flagged':
+        stopped = true;
+        add(env, 'The report looks like it carries instructions', 'red');
+        break;
+      case 'iteration':
+        if (baseline === null) baseline = e.testsFailed;
+        else if (!repro && e.testsFailed > baseline) {
+          repro = true;
+          add(
+            env,
+            `Problem reproduced with a failing test (step ${e.n})`,
+            'gold'
+          );
+        } else if (
+          !green &&
+          e.testsFailed === 0 &&
+          e.typeErrors === 0 &&
+          !e.rejected &&
+          !e.refused?.length &&
+          (repro || e.proposed?.length)
+        ) {
+          green = true;
+          if (stopped) add(env, `Checks pass (step ${e.n})`, 'muted');
+          else add(env, `Fix passes the tests (step ${e.n})`, 'green');
+        }
+        break;
+      case 'policy_refused':
+        stopped = true;
+        add(env, `Edit to ${e.path} refused by the role policy`, 'red');
+        break;
+      case 'blocked':
+        stopped = true;
+        add(env, `Blocked by the sandbox: ${e.detail}`, 'red');
+        break;
+      case 'pr':
+        add(env, `Pull request #${e.number} opened`, 'gold');
+        break;
+      case 'status':
+        if (
+          e.status === 'gave_up' ||
+          e.status === 'flagged' ||
+          e.status === 'error'
+        )
+          add(
+            env,
+            `Stopped${e.reason ? `: ${e.reason}` : ''}`,
+            e.status === 'gave_up' ? 'muted' : 'red'
+          );
+        break;
+    }
+  }
+  return out;
+};
+
+export const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+export const elapsed = (fromIso: string, toMs: number) => {
+  const s = Math.max(0, Math.round((toMs - Date.parse(fromIso)) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 };
