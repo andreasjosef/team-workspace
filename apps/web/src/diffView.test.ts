@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectLang, parseDiff } from './diffView.ts';
+import { detectLang, pairSplitRows, parseDiff } from './diffView.ts';
 
 describe('parseDiff', () => {
   it('parses modified and newly created files with line numbers and counts', () => {
@@ -52,5 +52,43 @@ describe('parseDiff', () => {
     expect(detectLang('apps/web/src/styles.css')).toBe('css');
     expect(detectLang('README.md')).toBe('markdown');
     expect(detectLang('unknown.xyz')).toBe('text');
+  });
+
+  it('pairs consecutive deletions and additions side by side for split view', () => {
+    const raw = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1,3 +1,4 @@',
+      ' const a = 1;',
+      '-const b = 2;',
+      '+const b = 3;',
+      '+const c = 4;',
+      ' export { a, b };',
+    ].join('\n');
+    const [file] = parseDiff(raw);
+    const rows = pairSplitRows(file!.lines);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toEqual({ kind: 'hunk', text: '@@ -1,3 +1,4 @@' });
+    expect(rows[1]).toMatchObject({
+      kind: 'pair',
+      left: { kind: 'context', oldLine: 1 },
+      right: { kind: 'context', newLine: 1 },
+    });
+    expect(rows[2]).toMatchObject({
+      kind: 'pair',
+      left: { kind: 'del', oldLine: 2 },
+      right: { kind: 'add', newLine: 2 },
+    });
+    expect(rows[3]).toMatchObject({
+      kind: 'pair',
+      left: null,
+      right: { kind: 'add', newLine: 3 },
+    });
+    expect(rows[4]).toMatchObject({
+      kind: 'pair',
+      left: { kind: 'context', oldLine: 3 },
+      right: { kind: 'context', newLine: 4 },
+    });
   });
 });

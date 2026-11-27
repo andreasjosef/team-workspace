@@ -182,3 +182,45 @@ export const parseDiff = (diff: string): DiffFile[] => {
 
   return files;
 };
+
+export type SplitRow =
+  | { kind: 'hunk'; text: string }
+  | { kind: 'pair'; left: DiffLine | null; right: DiffLine | null };
+
+// Pairs consecutive deletion + addition blocks side by side for Split view.
+export const pairSplitRows = (lines: DiffLine[]): SplitRow[] => {
+  const rows: SplitRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (line.kind === 'hunk') {
+      rows.push({ kind: 'hunk', text: line.text });
+      i++;
+      continue;
+    }
+    if (line.kind === 'context' || line.kind === 'meta') {
+      rows.push({ kind: 'pair', left: line, right: line });
+      i++;
+      continue;
+    }
+    const dels: DiffLine[] = [];
+    const adds: DiffLine[] = [];
+    while (i < lines.length && lines[i]!.kind === 'del') {
+      dels.push(lines[i]!);
+      i++;
+    }
+    while (i < lines.length && lines[i]!.kind === 'add') {
+      adds.push(lines[i]!);
+      i++;
+    }
+    const count = Math.max(dels.length, adds.length);
+    for (let k = 0; k < count; k++) {
+      rows.push({
+        kind: 'pair',
+        left: dels[k] ?? null,
+        right: adds[k] ?? null,
+      });
+    }
+  }
+  return rows;
+};

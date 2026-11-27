@@ -273,6 +273,12 @@ table.iters th {
   font-size: 0.78rem;
   color: var(--muted);
 }
+.diff-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
 .diff-theme-picker {
   display: inline-flex;
   flex-wrap: wrap;
@@ -431,6 +437,53 @@ table.iters th {
 .diff-row-meta .diff-text {
   color: var(--muted);
   font-style: italic;
+}
+
+.diff-code-split {
+  padding: 0.25rem 0;
+}
+.diff-split-hunk {
+  padding: 0.12rem 0.85rem;
+  margin: 0.2rem 0;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 9%, transparent);
+  font-size: 0.74rem;
+}
+.diff-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.diff-split-cell {
+  display: grid;
+  grid-template-columns: 2.5rem 1.25rem minmax(0, 1fr);
+  align-items: baseline;
+  min-width: 0;
+  overflow-x: auto;
+}
+.diff-split-cell:first-child {
+  border-right: 1px solid var(--bg-soft);
+}
+.diff-split-empty {
+  background: color-mix(in srgb, var(--bg-soft) 35%, transparent);
+}
+.diff-compact-gap {
+  padding: 0.1rem 0.85rem;
+  color: var(--faint);
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  user-select: none;
+}
+
+@media (max-width: 720px) {
+  .diff-split-row {
+    grid-template-columns: 1fr;
+  }
+  .diff-split-cell:first-child {
+    border-right: 0;
+  }
+  .diff-split-empty {
+    display: none;
+  }
 }
 
 .log {
