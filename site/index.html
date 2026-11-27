@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sandbugs</title>
+    <meta
+      name="description"
+      content="A support rep forwards a customer's report; an agent reproduces and fixes it in a throwaway sandbox, and a developer merges the pull request."
+    />
+    <style>
+      /* Colours from apps/web/src/tokens.css (Bitverkstad). */
+      :root {
+        color-scheme: dark;
+        --bg: #131311;
+        --bg-mid: #1c1c1a;
+        --bg-soft: #262624;
+        --bg-hover: #33322e;
+        --faint: #5a5650;
+        --muted: #928374;
+        --text: #d4c9af;
+        --text-strong: #ebdbb2;
+        --accent: #7daea3;
+        --accent-hover: #93c2b7;
+        --red: #ea6962;
+        --green: #a9b665;
+        --blue: #7daea3;
+        --purple: #d3869b;
+        --font-text:
+          'Atkinson Hyperlegible Next', 'Inter', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+        --radius: 8px;
+        --wrap: 68rem;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        background: var(--bg);
+        color: var(--text);
+      }
+      body {
+        margin: 0;
+        font-family: var(--font-text);
+        line-height: 1.6;
+        letter-spacing: 0.01em;
+      }
+      ::selection {
+        background: rgba(125, 174, 163, 0.25);
+      }
+      a {
+        color: var(--blue);
+        text-decoration-color: var(--faint);
+      }
+      a:hover {
+        color: var(--text-strong);
+      }
+      code {
+        font-family: var(--font-mono);
+        font-size: 0.88em;
+        background: var(--bg-soft);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+      h1,
+      h2,
+      h3 {
+        color: var(--text-strong);
+        line-height: 1.2;
+        margin: 0 0 0.5em;
+      }
+      p {
+        margin: 0 0 1em;
+      }
+      .wrap {
+        max-width: var(--wrap);
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+      section {
+        padding: 4.5rem 0;
+        border-top: 1px solid var(--bg-soft);
+      }
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-bottom: 0.75rem;
+      }
+      h2 {
+        font-size: clamp(1.5rem, 3vw, 2rem);
+      }
+      .lead {
+        color: var(--muted);
+        max-width: 42rem;
+        font-size: 1.05rem;
+      }
+
+      /* Nav */
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 0;
+        gap: 1rem;
+      }
+      .brand {
+        font-family: var(--font-mono);
+        font-weight: 700;
+        color: var(--text-strong);
+        text-decoration: none;
+        font-size: 1.1rem;
+      }
+      .brand span {
+        color: var(--accent);
+      }
+      nav ul {
+        display: flex;
+        gap: 1.25rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 0.95rem;
+      }
+      nav ul a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      /* Hero */
+      .hero {
+        padding: 5rem 0 4.5rem;
+      }
+      .hero h1 {
+        font-size: clamp(2.1rem, 5.5vw, 3.6rem);
+        max-width: 52rem;
+        letter-spacing: -0.01em;
+      }
+      .hero h1 em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      .hero .lead {
+        font-size: 1.15rem;
+        margin: 1.25rem 0 2rem;
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .btn {
+        display: inline-block;
+        padding: 0.65rem 1.1rem;
+        border-radius: var(--radius);
+        text-decoration: none;
+        font-weight: 600;
+        border: 1px solid var(--bg-hover);
+        color: var(--text-strong);
+        background: var(--bg-soft);
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--bg);
+      }
+      .btn:hover {
+        color: var(--text-strong);
+        background: var(--bg-hover);
+      }
+      .btn.primary:hover {
+        color: var(--bg);
+        background: var(--accent-hover);
+      }
+      .tag {
+        margin-top: 2.5rem;
+        font-size: 0.85rem;
+        color: var(--faint);
+      }
+
+      /* Steps */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+        gap: 1rem;
+        margin-top: 2.5rem;
+        counter-reset: step;
+      }
+      .card {
+        background: var(--bg-mid);
+        border: 1px solid var(--bg-soft);
+        border-radius: var(--radius);
+        padding: 1.25rem 1.25rem 0.5rem;
+      }
+      .card h3 {
+        font-size: 1.05rem;
+      }
+      .card p {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+      .steps .card::before {
+        counter-increment: step;
+        content: '0' counter(step);
+        display: block;
+        font-family: var(--font-mono);
+        color: var(--accent);
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+      }
+
+      /* Outcomes */
+      .outcomes {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 2rem;
+      }
+      .outcome {
+        display: grid;
+        grid-template-columns: 9rem 1fr;
+        gap: 1rem;
+        align-items: baseline;
+        padding: 0.85rem 1rem;
+        background: var(--bg-mid);
+        border-radius: var(--radius);
+        border-left: 3px solid var(--c, var(--faint));
+      }
+      .outcome b {
+        color: var(--c);
+        font-family: var(--font-mono);
+        font-weight: 600;
+      }
+      .outcome span {
+        color: var(--muted);
+      }
+      @media (max-width: 34rem) {
+        .outcome {
+          grid-template-columns: 1fr;
+          gap: 0.25rem;
+        }
+        nav ul {
+          display: none;
+        }
+      }
+
+      /* Architecture */
+      .diagram {
+        margin-top: 2.5rem;
+        background: var(--bg-mid);
+        border: 1px solid var(--bg-soft);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        overflow-x: auto;
+      }
+      .diagram svg {
+        display: block;
+        width: 100%;
+        min-width: 40rem;
+        height: auto;
+      }
+      .diagram text {
+        font-family: var(--font-text);
+        fill: var(--text);
+        font-size: 13px;
+      }
+      .diagram .title {
+        fill: var(--text-strong);
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .diagram .sub {
+        fill: var(--muted);
+        font-size: 12px;
+      }
+      .diagram .label {
+        fill: var(--muted);
+        font-size: 11.5px;
+        font-family: var(--font-mono);
+      }
+      .diagram .box {
+        fill: var(--bg-soft);
+        stroke: var(--bg-hover);
+        stroke-width: 1.5;
+      }
+      .diagram .trusted {
+        stroke: var(--accent);
+      }
+      .diagram .untrusted {
+        stroke: var(--red);
+        stroke-dasharray: 5 4;
+      }
+      .diagram .ext {
+        fill: var(--bg);
+        stroke: var(--faint);
+      }
+      .diagram .arrow {
+        stroke: var(--muted);
+        stroke-width: 1.5;
+        fill: none;
+        marker-end: url(#head);
+      }
+      .diagram .blocked {
+        stroke: var(--red);
+        stroke-width: 1.5;
+        fill: none;
+        stroke-dasharray: 4 4;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.25rem;
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .legend i {
+        display: inline-block;
+        width: 1.4rem;
+        height: 0;
+        border-top: 2px solid;
+        vertical-align: middle;
+        margin-right: 0.4rem;
+      }
+      .parts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+        gap: 1rem;
+        margin-top: 1.5rem;
+      }
+      .parts .card code {
+        color: var(--text-strong);
+      }
+
+      /* Containment */
+      .layers {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+        gap: 1rem;
+        margin-top: 2.5rem;
+      }
+      .layers .card h3::before {
+        content: '▪ ';
+        color: var(--green);
+      }
+
+      /* Callout */
+      .callout {
+        background: var(--bg-mid);
+        border: 1px solid var(--bg-soft);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius);
+        padding: 1.5rem 1.5rem 0.75rem;
+        margin-top: 2rem;
+      }
+      .callout ul {
+        margin: 0 0 1em;
+        padding-left: 1.2rem;
+        color: var(--muted);
+      }
+      .callout li {
+        margin-bottom: 0.4rem;
+      }
+      .callout li strong {
+        color: var(--text);
+      }
+
+      /* Stats */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+        gap: 1rem;
+        margin-top: 2.5rem;
+      }
+      .stat {
+        background: var(--bg-mid);
+        border-radius: var(--radius);
+        padding: 1.25rem;
+      }
+      .stat b {
+        display: block;
+        font-size: 2rem;
+        color: var(--text-strong);
+        font-family: var(--font-mono);
+        line-height: 1.2;
+      }
+      .stat span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      footer {
+        border-top: 1px solid var(--bg-soft);
+        padding: 2rem 0 3rem;
+        color: var(--faint);
+        font-size: 0.9rem;
+      }
+      footer .wrap {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="wrap">
+      <nav>
+        <a class="brand" href="#">sand<span>bugs</span></a>
+        <ul>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#containment">Containment</a></li>
+          <li>
+            <a href="https://github.com/andreasjosef/team-workspace">GitHub</a>
+          </li>
+        </ul>
+      </nav>
+    </header>
+
+    <main>
+      <div class="wrap hero">
+        <div class="eyebrow">Customer report → pull request</div>
+        <h1>
+          Turn a customer's bug report into a reviewed fix,
+          <em>without trusting the report.</em>
+        </h1>
+        <p class="lead">
+          A support rep forwards what the customer wrote. An agent reproduces
+          the bug with a failing test, fixes it inside a throwaway sandbox, and
+          the hub opens a pull request. A developer merges it, and the hub
+          can't.
+        </p>
+        <div class="buttons">
+          <a class="btn primary" href="#how">See how it works</a>
+          <a class="btn" href="https://github.com/andreasjosef/team-workspace"
+            >View the code</a
+          >
+        </div>
+        <p class="tag">
+          Built for the Vultr Agent Runtime Hackathon · Vultr Serverless
+          Inference · gVisor sandboxes
+        </p>
+      </div>
+
+      <section id="how">
+        <div class="wrap">
+          <div class="eyebrow">How it works</div>
+          <h2>From the support inbox to a pull request</h2>
+          <p class="lead">
+            No developer has to reproduce anything. They get a pull request with
+            a failing test, a fix and a receipt of everything the agent saw and
+            tried.
+          </p>
+          <div class="steps">
+            <div class="card">
+              <h3>Forward</h3>
+              <p>
+                The support rep forwards a customer's report from the inbox. The
+                text is treated as data: scanned for steering attempts and
+                wrapped before any model sees it.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Reproduce</h3>
+              <p>
+                The agent may only add a new test, and it has to fail for real
+                in the sandbox. No red test, no next step.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Fix</h3>
+              <p>
+                It changes code inside its role's scope until the reproduction
+                passes and nothing else breaks. Every edit is checked against
+                the policy before it's written.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Review</h3>
+              <p>
+                The hub pushes a <code>task/&lt;id&gt;</code> branch and opens a
+                pull request. The rep gets a drafted reply for the customer. A
+                developer merges on GitHub.
+              </p>
+            </div>
+          </div>
+
+          <h3 style="margin-top: 3.5rem">
+            Every task ends one way, and the rep gets a reply to send
+          </h3>
+          <div class="outcomes">
+            <div class="outcome" style="--c: var(--green)">
+              <b>pr_opened</b
+              ><span
+                >A failing test and a fix exist. A pull request waits for a
+                developer.</span
+              >
+            </div>
+            <div class="outcome" style="--c: var(--purple)">
+              <b>gave_up</b
+              ><span
+                >No fix within the scope, or the agent chose to stop. The reason
+                shows on the receipt.</span
+              >
+            </div>
+            <div class="outcome" style="--c: var(--red)">
+              <b>flagged</b
+              ><span
+                >The report tried to steer the agent. Stopped before any sandbox
+                or model call. No pull request.</span
+              >
+            </div>
+            <div class="outcome" style="--c: var(--muted)">
+              <b>error</b
+              ><span
+                >Something failed, including a patch refused at publish time.
+                Nothing is published.</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <div class="wrap">
+          <div class="eyebrow">Architecture</div>
+          <h2>One VM, one trusted hub, many throwaway sandboxes</h2>
+          <p class="lead">
+            The hub holds the secrets and a clone of the product repo. Untrusted
+            code runs only in short-lived containers that hold no secrets.
+            Untrusted text reaches a model, never a decision.
+          </p>
+
+          <div class="diagram">
+            <svg viewBox="0 0 900 470" role="img" aria-labelledby="arch-title">
+              <title id="arch-title">
+                The browser talks to Caddy, which proxies to the hub. The hub
+                calls Vultr inference and GitHub, and runs each command in a
+                sandbox container whose only way out is the egress proxy to a
+                local npm mirror.
+              </title>
+              <defs>
+                <marker
+                  id="head"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="#928374" />
+                </marker>
+              </defs>
+
+              <!-- Browser / Caddy -->
+              <rect
+                class="box ext"
+                x="30"
+                y="30"
+                width="180"
+                height="62"
+                rx="8"
+              />
+              <text class="title" x="50" y="56">Support view</text>
+              <text class="sub" x="50" y="76">apps/web · React</text>
+
+              <rect class="box" x="30" y="150" width="180" height="62" rx="8" />
+              <text class="title" x="50" y="176">Caddy</text>
+              <text class="sub" x="50" y="196">TLS · /api · WebSocket</text>
+              <path class="arrow" d="M120 92 V146" />
+
+              <!-- Hub -->
+              <rect
+                class="box trusted"
+                x="290"
+                y="120"
+                width="320"
+                height="140"
+                rx="8"
+              />
+              <text class="title" x="310" y="148">Hub</text>
+              <text class="sub" x="350" y="148">
+                apps/hub · trusted · holds the secrets
+              </text>
+              <text x="310" y="176">roles from .hub/ → queue → task loop</text>
+              <text x="310" y="198">checkPolicy on every edit</text>
+              <text x="310" y="220">checkPatch before publishing</text>
+              <text x="310" y="242">
+                green → push task/&lt;id&gt; → pull request
+              </text>
+              <path class="arrow" d="M210 181 H286" />
+
+              <!-- External -->
+              <rect
+                class="box ext"
+                x="690"
+                y="70"
+                width="180"
+                height="62"
+                rx="8"
+              />
+              <text class="title" x="710" y="96">Vultr Inference</text>
+              <text class="sub" x="710" y="116">the model</text>
+              <path class="arrow" d="M610 150 L686 110" />
+
+              <rect
+                class="box ext"
+                x="690"
+                y="200"
+                width="180"
+                height="62"
+                rx="8"
+              />
+              <text class="title" x="710" y="226">GitHub</text>
+              <text class="sub" x="710" y="246">push task/*, open PR</text>
+              <path class="arrow" d="M610 220 L686 230" />
+              <text class="label" x="640" y="290">
+                main: ruleset, 1 review,
+              </text>
+              <text class="label" x="640" y="306">empty bypass list</text>
+
+              <!-- Sandbox -->
+              <rect
+                class="box untrusted"
+                x="290"
+                y="340"
+                width="230"
+                height="100"
+                rx="8"
+              />
+              <text class="title" x="310" y="368">Sandbox container</text>
+              <text class="sub" x="310" y="390">/work = the task's copy</text>
+              <text class="sub" x="310" y="410">
+                no secrets · gVisor · non-root
+              </text>
+              <text class="sub" x="310" y="428">
+                checks + fixes: --network none
+              </text>
+              <path class="arrow" d="M405 260 V336" />
+              <text class="label" x="415" y="304">docker run, per command</text>
+
+              <!-- Egress + verdaccio -->
+              <rect
+                class="box"
+                x="580"
+                y="360"
+                width="140"
+                height="62"
+                rx="8"
+              />
+              <text class="title" x="598" y="386">Egress proxy</text>
+              <text class="sub" x="598" y="406">GET/HEAD only</text>
+              <path class="arrow" d="M520 391 H576" />
+              <text class="label" x="524" y="380">install</text>
+
+              <rect
+                class="box"
+                x="750"
+                y="360"
+                width="120"
+                height="62"
+                rx="8"
+              />
+              <text class="title" x="768" y="386">Verdaccio</text>
+              <text class="sub" x="768" y="406">npm mirror</text>
+              <path class="arrow" d="M720 391 H746" />
+
+              <!-- Blocked internet -->
+              <path class="blocked" d="M290 400 H200" />
+              <text class="label" x="60" y="396" style="fill: #ea6962">
+                ✕ internet
+              </text>
+              <text class="label" x="60" y="412">anything else refused</text>
+            </svg>
+            <div class="legend">
+              <span><i style="color: var(--accent)"></i>trusted</span>
+              <span
+                ><i style="color: var(--red); border-top-style: dashed"></i
+                >untrusted code</span
+              >
+              <span><i style="color: var(--faint)"></i>outside the VM</span>
+            </div>
+          </div>
+
+          <div class="parts">
+            <div class="card">
+              <h3><code>packages/agent</code></h3>
+              <p>
+                Role policy, input scanner, context builder, the edit format and
+                its guardrails, the reproduce-then-fix loop and its stop rules,
+                the reply draft.
+              </p>
+            </div>
+            <div class="card">
+              <h3><code>packages/sandbox</code></h3>
+              <p>
+                <code>runInSandbox</code>: one container per command, env built
+                from scratch, read-only root, all capabilities dropped, 1 GB / 1
+                CPU / 120 s.
+              </p>
+            </div>
+            <div class="card">
+              <h3><code>apps/hub</code></h3>
+              <p>
+                Fastify: tasks, the event stream over WebSocket, the real
+                pipeline, the fixture run, and the GitHub publisher.
+              </p>
+            </div>
+            <div class="card">
+              <h3><code>packages/shared</code></h3>
+              <p>
+                The contract between hub and UI. Every status change is an
+                event; the task snapshot is derived from the stream, so the
+                audit trail is the source of truth.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="containment">
+        <div class="wrap">
+          <div class="eyebrow">Containment</div>
+          <h2>Assume the report is hostile</h2>
+          <p class="lead">
+            The input scanner warns; the layers below protect. Each one shows up
+            on the task's receipt, and a flagged report can replay a scripted
+            hostile proposal to show every layer refusing it.
+          </p>
+          <div class="layers">
+            <div class="card">
+              <h3>Untrusted text</h3>
+              <p>
+                Customer words go into prompts only inside
+                <code>&lt;untrusted&gt;</code> markers, and never decide
+                anything on the host.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Write scope</h3>
+              <p>
+                Each role may add tests widely and change code narrowly. Deny
+                wins. Three refusals flag the task.
+              </p>
+            </div>
+            <div class="card">
+              <h3>The <code>.hub/</code> lock</h3>
+              <p>
+                Role files and prompts are never agent-writable, so a report
+                can't talk the agent into widening its own scope.
+              </p>
+            </div>
+            <div class="card">
+              <h3>No network</h3>
+              <p>
+                Checks and fixes run with <code>--network none</code>. A test
+                that tries to phone home is blocked and halts the task.
+              </p>
+            </div>
+            <div class="card">
+              <h3>No secrets</h3>
+              <p>
+                No env files, no npmrc, no mounts but <code>/work</code> and a
+                read-only dependency cache.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Only what was edited</h3>
+              <p>
+                The diff holds only paths the agent edited through the policy
+                check, re-checked before it's published.
+              </p>
+            </div>
+          </div>
+
+          <div class="callout">
+            <h3>The hub can't merge, not just won't</h3>
+            <ul>
+              <li>
+                <strong>GitHub enforces it.</strong> A ruleset on
+                <code>main</code> requires a pull request with one approving
+                review, with an empty bypass list, so it binds admins too.
+              </li>
+              <li>
+                <strong>The token is a bot's.</strong> Fine-grained, one repo,
+                Contents and Pull requests only. A push to
+                <code>main</code> gets GH013, a merge gets 405.
+              </li>
+              <li>
+                <strong>The bot can't approve its own pull requests,</strong> so
+                a developer always reviews.
+              </li>
+              <li>
+                <strong>A flagged report never opens a pull request,</strong>
+                and its reply to the customer is a fixed template.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <div class="eyebrow">On the demo VM</div>
+          <h2>Measured with a live model and gVisor sandboxes</h2>
+          <div class="stats">
+            <div class="stat">
+              <b>5 / 5</b
+              ><span>runs of the discount bug, from forward to green</span>
+            </div>
+            <div class="stat">
+              <b>~31 s</b><span>from forward to an open pull request</span>
+            </div>
+            <div class="stat">
+              <b>5 / 5</b
+              ><span
+                >hostile reports where the model refused, now ended as
+                flagged</span
+              >
+            </div>
+            <div class="stat">
+              <b>0</b
+              ><span
+                >routes in the hub that approve, merge or commit to main</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>Sandbugs · Vultr Agent Runtime Hackathon 2026</span>
+        <span>
+          <a href="https://github.com/andreasjosef/team-workspace">Code</a> ·
+          <a
+            href="https://github.com/andreasjosef/team-workspace/blob/main/docs/architecture.md"
+            >Architecture</a
+          >
+          ·
+          <a
+            href="https://github.com/andreasjosef/team-workspace/blob/main/CONTEXT.md"
+            >Vocabulary</a
+          >
+        </span>
+      </div>
+    </footer>
+  </body>
+</html>
