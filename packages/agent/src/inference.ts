@@ -62,17 +62,18 @@ const readUsage = (raw: ApiBody['usage']): Usage | null => {
   return Object.keys(usage).length ? usage : null;
 };
 
-// One line for the task log: why the reply ended and what it cost.
-export const describeCompletion = ({ finishReason, usage }: Completion) => {
-  const tokens = usage
+const describeTokens = (usage: Usage | null) =>
+  usage
     ? [
         `${usage.promptTokens ?? '?'} prompt`,
         `${usage.completionTokens ?? '?'} completion`,
         `${usage.totalTokens ?? '?'} total`,
       ].join(', ')
     : 'not reported';
-  return `Model call: finish_reason ${finishReason ?? 'not reported'}, tokens ${tokens}`;
-};
+
+// One line for the task log: why the reply ended and what it cost.
+export const describeCompletion = ({ finishReason, usage }: Completion) =>
+  `Model call: finish_reason ${finishReason ?? 'not reported'}, tokens ${describeTokens(usage)}`;
 
 export const createInference = (
   config: InferenceConfig,
@@ -114,11 +115,11 @@ export const createInference = (
     const finishReason =
       typeof choice?.finish_reason === 'string' ? choice.finish_reason : null;
     // An empty reply names its finish_reason, so a content filter can be told
-    // apart from running out of output tokens.
+    // apart from running out of output tokens, and what it cost.
     if (typeof content !== 'string' || !content)
       return fail(
         'unavailable',
-        `Inference returned no content (finish_reason: ${finishReason ?? 'not reported'})`
+        `Inference returned no content (finish_reason: ${finishReason ?? 'not reported'}; tokens ${describeTokens(readUsage(body.usage))})`
       );
     return ok({ content, finishReason, usage: readUsage(body.usage) });
   },

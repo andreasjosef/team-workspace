@@ -58,10 +58,13 @@ type LoopDeps = {
   // hub uses it for "too many policy refusals").
   halt?: () => string | null;
   // Once per check that ran in the sandbox (0 is the baseline). An answer
-  // refused before the sandbox gets notes, never an iteration.
-  onIteration: (n: number, counts: CheckCounts) => void;
-  // `Model call k: …` for each answer and why it was rejected; `Iteration
-  // n: answer rejected (…)` for a reproduction that ran and was discarded.
+  // refused before the sandbox gets notes, never an iteration. `rejected`:
+  // the check ran, then its answer wasn't taken (a reproduction that didn't
+  // show the bug and was discarded), and why.
+  onIteration: (n: number, counts: CheckCounts, rejected?: string) => void;
+  // Log text: `Model call k: …` for each answer and why it was rejected;
+  // `Iteration n: answer rejected (…)` for a discarded reproduction. Only
+  // for the log: anything the caller acts on comes as an argument above.
   onNote?: (note: string) => void;
   baseline: CheckCounts;
   // The stop rules and the model-call cap (stop.ts).
@@ -113,13 +116,10 @@ const capReason = (reason: string) => {
 // the role's scope, then allowed in this step. Scope comes first, so a step
 // never hides an out-of-scope edit from the policy (and its refusal count).
 const vetAnswer = (
-  proposal: Result<Answer>,
+  answer: EditsResponse,
   checkScope: TaskLoopDeps['checkScope'],
   bug: BugState | undefined
 ): Result<EditsResponse> => {
-  if (!proposal.success) return proposal;
-  const answer = proposal.value;
-  if (isStop(answer)) return fail('unexpected', 'A stop has no edits to vet');
   const scope = checkScope?.(answer.edits);
   if (scope && !scope.success) return scope;
   const { edits } = answer;
@@ -157,17 +157,19 @@ export const reproductionGate = (
   baseline: CheckCounts
 ): string | null => {
   const broken: string[] = [];
+  // "No test failed" only says more when the count did rise: otherwise
+  // "no more tests failed" already covers it.
   if (latest.testsFailed <= baseline.testsFailed)
     broken.push(
       `the reproduction must fail before the fix, but no more tests failed than before (${latest.testsFailed}).`
     );
+  else if (!latest.someTestFailed)
+    broken.push(
+      'the reproduction must fail a test, but no test failed: a test file did not load, or the run crashed before any test ran.'
+    );
   if (latest.typeErrors > baseline.typeErrors)
     broken.push(
       `the reproduction must not add type errors, but there are ${latest.typeErrors} (${baseline.typeErrors} before). Fix the test's types.`
-    );
-  if (!latest.someTestFailed && latest.testsFailed > baseline.testsFailed)
-    broken.push(
-      'the reproduction must fail a test, but no test failed: a test file did not load, or the run crashed before any test ran.'
     );
   if (!broken.length) return null;
   return [
@@ -199,15 +201,22 @@ export const runTaskLoop = async (
     const halted = deps.halt?.();
     if (halted) return { status: 'halted', reason: halted, ...end };
 
-    const decision = decide(
-      history.slice(bug?.step === 'fix' ? bug.since : 0),
-      deps.baseline,
-      rules
-    );
-    if (decision.stop && (decision.status === 'gave_up' || applied > 0)) {
-      return { ...decision, ...end };
+    // Each step has its own budget of checks, counted from the check it
+    // started at: the fix step from the accepted reproduction's. Discarded
+    // reproductions stay on the curve but never use up the fix step's
+    // checks or patience (spec #41, story 12).
+    const since = bug?.step === 'fix' ? bug.since : 0;
+    // The stop rules don't apply while reproducing: a reproduction raises
+    // the count on purpose, so "stopped falling" means nothing there, and a
+    // green check isn't done before anything was accepted. The step's
+    // check cap and the model-call cap bound it.
+    if (bug?.step !== 'reproduce') {
+      const decision = decide(history.slice(since), deps.baseline, rules);
+      if (decision.stop && (decision.status === 'gave_up' || applied > 0)) {
+        return { ...decision, ...end };
+      }
     }
-    if (n - 1 >= rules.maxIterations) {
+    if (n - 1 - since >= rules.maxIterations) {
       return {
         status: 'gave_up',
         reason: applied
@@ -238,20 +247,21 @@ export const runTaskLoop = async (
     // A valid stop ends the loop at once, in either step, and never counts
     // as green, even after an applied fix. It carries no edits, so there's
     // nothing for the policy to check.
-    if (proposal.success && isStop(proposal.value)) {
-      const reason = capReason(proposal.value.reason);
-      if (proposal.value.reasoning)
-        deps.onNote?.(`${call}: ${proposal.value.reasoning}`);
-      deps.onNote?.(`${call}: stopped (${reason})`);
-      return { status: 'stopped', reason, ...end, modelCalls };
+    let answer: Result<EditsResponse>;
+    if (!proposal.success) answer = proposal;
+    else {
+      const value = proposal.value;
+      if (isStop(value)) {
+        const reason = capReason(value.reason);
+        if (value.reasoning) deps.onNote?.(`${call}: ${value.reasoning}`);
+        deps.onNote?.(`${call}: stopped (${reason})`);
+        return { status: 'stopped', reason, ...end, modelCalls };
+      }
+      deps.onNote?.(`${call}: ${value.reasoning ?? 'proposing edits'}`);
+      answer = vetAnswer(value, deps.checkScope, bug);
     }
-    if (proposal.success)
-      deps.onNote?.(
-        `${call}: ${proposal.value.reasoning ?? 'proposing edits'}`
-      );
     // An invalid answer or a refused patch never reaches the sandbox: it adds
     // no check, and the model hears why on its next call.
-    const answer = vetAnswer(proposal, deps.checkScope, bug);
     if (!answer.success) {
       lastRejection = answer.message;
       deps.onNote?.(`${call}: answer rejected (${answer.message})`);
@@ -265,8 +275,9 @@ export const runTaskLoop = async (
       continue;
     }
     latest = await deps.check();
+    let rejected: string | undefined;
     const refused =
-      deps.reproduceFirst && bug?.step === 'reproduce'
+      bug?.step === 'reproduce'
         ? reproductionGate(latest, deps.baseline)
         : null;
     if (deps.reproduceFirst && refused) {
@@ -275,6 +286,7 @@ export const runTaskLoop = async (
       const paths = edits.map((e) => e.path);
       const discarded = await deps.discard(paths);
       lastRejection = `${refused}\n${discarded.success ? `Discarded: ${paths.join(', ')}` : `Not all discarded: ${discarded.message}`}`;
+      rejected = lastRejection;
       deps.onNote?.(`Iteration ${n}: answer rejected (${lastRejection})`);
     } else {
       lastRejection = undefined;
@@ -291,6 +303,6 @@ export const runTaskLoop = async (
       typeErrors: latest.typeErrors,
       testsFailed: latest.testsFailed,
     });
-    deps.onIteration(n, latest);
+    deps.onIteration(n, latest, rejected);
   }
 };

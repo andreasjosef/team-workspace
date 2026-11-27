@@ -41,7 +41,8 @@ export type StopAnswer = z.infer<typeof StopAnswer>;
 
 export type Answer = EditsResponse | StopAnswer;
 
-export const isStop = (a: Answer): a is StopAnswer => 'action' in a;
+export const isStop = (a: Answer): a is StopAnswer =>
+  'action' in a && a.action === 'stop';
 
 // Pulls the JSON object out of a model reply (models like to wrap it in
 // ```json fences or add a sentence) and validates it: a stop answer when

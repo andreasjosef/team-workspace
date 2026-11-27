@@ -1,7 +1,12 @@
 import { fail, ok } from '@app/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { Answer, EditsResponse, StopAnswer } from './edits.ts';
-import { runTaskLoop, type CheckOutcome, type TaskStep } from './fixLoop.ts';
+import {
+  reproductionGate,
+  runTaskLoop,
+  type CheckOutcome,
+  type TaskStep,
+} from './fixLoop.ts';
 
 const edit = { edits: [{ path: 'src/a.ts', search: 'a', replace: 'b' }] };
 const clean = { typeErrors: 0, testsFailed: 0, someTestFailed: false };
@@ -274,6 +279,79 @@ describe('runTaskLoop, bug task', () => {
       applied: 2,
       iterations: 2,
       modelCalls: 5,
+    });
+  });
+
+  it("discarded reproductions stay on the curve, but use up neither patience nor the fix step's checks", async () => {
+    // Two reproductions that add type errors, then one that fails cleanly,
+    // then the fix. Before, the two discards tripped patience 2 ("stopped
+    // falling"), and one budget of 3 checks left none for the fix.
+    const answers: Answer[] = [reproduction, reproduction, reproduction, edit];
+    const checks: CheckOutcome[] = [
+      reproChecks.typeError,
+      reproChecks.typeError,
+      reproChecks.fails,
+      { ...clean, errors: '' },
+    ];
+    const asked: (TaskStep | undefined)[] = [];
+    const iterations: { n: number; rejected?: string }[] = [];
+    const result = await runTaskLoop({
+      check: async () => checks.shift()!,
+      first: { ...clean, errors: '' },
+      propose: async ({ step }) => {
+        asked.push(step);
+        return ok(answers[asked.length - 1]!);
+      },
+      apply: async () => ok(null),
+      reproduceFirst: true,
+      discard: async () => ok(null),
+      onIteration: (n, _c, rejected) =>
+        iterations.push(rejected ? { n, rejected } : { n }),
+      baseline: clean,
+      rules: { maxIterations: 3, patience: 2, maxModelCalls: 10 },
+    });
+
+    expect(asked).toEqual(['reproduce', 'reproduce', 'reproduce', 'fix']);
+    // Every check is an iteration; the discarded ones say why.
+    expect(iterations.map((i) => i.n)).toEqual([0, 1, 2, 3, 4]);
+    expect(iterations[1]?.rejected).toMatch(/must not add type errors/);
+    expect(iterations[2]?.rejected).toMatch(/must not add type errors/);
+    expect(iterations[3]).toEqual({ n: 3 });
+    expect(iterations[4]).toEqual({ n: 4 });
+    expect(result).toMatchObject({
+      status: 'green',
+      applied: 2,
+      iterations: 4,
+      modelCalls: 4,
+    });
+  });
+
+  it('gives the fix step its own patience, counted from the reproduction', async () => {
+    // One discarded reproduction, the accepted one, then fixes that don't
+    // bring the count down: patience ends it after two fix checks.
+    const checks: CheckOutcome[] = [
+      reproChecks.passes,
+      reproChecks.fails,
+      reproChecks.fails,
+      reproChecks.fails,
+    ];
+    let calls = 0;
+    const result = await runTaskLoop({
+      check: async () => checks.shift()!,
+      first: { ...clean, errors: '' },
+      propose: async () => ok(++calls <= 2 ? reproduction : edit),
+      apply: async () => ok(null),
+      reproduceFirst: true,
+      discard: async () => ok(null),
+      onIteration: () => {},
+      baseline: clean,
+      rules: { maxIterations: 6, patience: 2, maxModelCalls: 10 },
+    });
+    expect(result).toMatchObject({
+      status: 'gave_up',
+      reason: 'error count stopped falling for 2 iterations',
+      iterations: 4,
+      applied: 3,
     });
   });
 
@@ -644,5 +722,16 @@ describe('runTaskLoop', () => {
       iterations: 0,
       modelCalls: 3,
     });
+  });
+});
+
+describe('reproductionGate', () => {
+  it('names one rule when no more tests failed and none ran', () => {
+    const gate = reproductionGate(
+      { ...clean, errors: 'Error: Cannot find module' },
+      clean
+    );
+    expect(gate).toMatch(/no more tests failed than before/);
+    expect(gate).not.toMatch(/no test failed/);
   });
 });
