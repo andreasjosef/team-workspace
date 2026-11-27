@@ -611,7 +611,7 @@ describe('pipeline', () => {
     // The reproduce step names the tests next to the context files, so the
     // model picks a new file name (live runs kept trying discount.test.ts).
     expect(user(0)).toContain(
-      'These test files already exist and stay unchanged: src/checkout/discount.test.ts.'
+      'These test files already exist and stay unchanged: src/checkout/discount.test.ts, src/checkout/shipping.test.ts.'
     );
     expect(user(1)).toContain('Step: reproduce');
     expect(user(1)).toContain('may add only new test files');
