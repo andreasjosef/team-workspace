@@ -1,6 +1,7 @@
 import type { Incident } from '@app/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../api.ts';
+import { myTasks } from '../myTasks.ts';
 
 // One button from a customer's report to an agent working on it. The report
 // goes in exactly as the customer wrote it; the hub treats it as untrusted.
@@ -24,6 +25,7 @@ export const ForwardButton = ({
         })
       ),
     onSuccess: (created) => {
+      myTasks.add(created.taskId);
       onStarted?.(created.taskId);
       void client.invalidateQueries({ queryKey: ['tasks'] });
     },
