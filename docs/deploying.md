@@ -49,9 +49,11 @@ sudo install -m 600 -o hub -g hub /root/.ssh/team-workspace-deploy /home/hub/.ss
 
 The product lives in its own GitHub repo, the **demo repo**: `demo/shop` with its tests, decisions and `.hub/` roles. The hub works on a clone of it (the **hub repo**, `HUB_REPO_DIR`). Before each task it fetches the demo repo's `main`, resets the clone to it and re-reads roles and decisions, so a pull request a developer merged shows up in the next task without a restart. A green task becomes a branch `task/<id>` pushed to the demo repo and a pull request on it. The hub never merges, and GitHub refuses to let its token do so.
 
-### Demo repo setup (once, by hand, from your laptop)
+### Demo repo setup (once, from your laptop)
 
-Use a separate bot GitHub account as the token's owner if you can, with write access to the demo repo only: then "the hub can't merge" holds whoever set it up. **The demo repo must be public:** the hub fetches its `main` without a token, so a private demo repo fails every fetch and each task starts from the last local `main`. Public also lets the judges open the pull request.
+**The quick way:** `bash deploy/demo-repo-wizard.sh` walks you through this whole section on an existing VM (built with `vm-wizard.sh`): the org and the bot, the repo, the ruleset, the label, the token, the hub repo clone and `.env`, a deploy of `main`, INC-1042 end to end, the two refusal checks, a sync check and a reset. It writes a run record to `~/.local/state/team-workspace-vm/` and offers to post it on #28.
+
+The demo repo lives in a free GitHub **organization** you own, and a separate **bot account**, a member of that org with write access to the demo repo only, owns the hub's token. Then "the hub can't merge" holds whoever set it up, and you, as a developer, can approve and merge the bot's pull requests (nobody can approve their own). It has to be an org: a fine-grained token reaches only repos of one owner, and not a personal account's repo where its owner is merely a collaborator. Set the org's base permission to none and allow fine-grained tokens in its settings (Personal access tokens). **The demo repo must be public:** the hub fetches its `main` without a token, so a private demo repo fails every fetch and each task starts from the last local `main`. Public also lets the judges open the pull request.
 
 1. **Create the repo, public, from `demo/shop` and tag `demo-start`:**
 
@@ -85,7 +87,7 @@ Use a separate bot GitHub account as the token's owner if you can, with write ac
    gh label create from-support --repo <owner>/<name> --color 0e8a16 --description "Opened by the hub from a support report"
    ```
 
-4. **A fine-grained token** (GitHub → Settings → Developer settings → Fine-grained tokens), signed in as the token's owner. Repository access: only the demo repo. Permissions: Contents read and write, Pull requests read and write, Metadata read. Nothing else. Expiry: the day after the event. Save it in the team's password manager. Pull requests write covers the labels too. If labelling fails anyway, the task log says "Labelling pull request #N failed: …" and the pull request stays open without labels; nothing else depends on them.
+4. **A fine-grained token** (GitHub → Settings → Developer settings → Fine-grained tokens), signed in as the bot. Resource owner: the org. Repository access: only the demo repo. If the org requires approval for fine-grained tokens, approve it in the org's settings. Permissions: Contents read and write, Pull requests read and write, Metadata read. Nothing else. Expiry: the day after the event. Save it in the team's password manager. Pull requests write covers the labels too. If labelling fails anyway, the task log says "Labelling pull request #N failed: …" and the pull request stays open without labels; nothing else depends on them.
 
 5. **Clone the demo repo as the hub repo on the VM**, over https, with no credentials in the URL. The directory exists and is empty after `setup-vm.sh`:
 
