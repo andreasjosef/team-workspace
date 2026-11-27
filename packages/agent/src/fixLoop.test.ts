@@ -52,7 +52,7 @@ const bugTask = async (
     reproFails = true,
     repro = 'fails' as keyof typeof reproChecks,
     discardFails = false,
-    rules = { maxIterations: 6, patience: 2 },
+    rules = { maxIterations: 6, patience: 2, maxModelCalls: 10 },
   } = {}
 ) => {
   const files = new Set<string>();
@@ -94,15 +94,16 @@ describe('runTaskLoop, bug task', () => {
   it('rejects a reproduction sent together with the fix, then goes 0, 1, 0 with the test first', async () => {
     const bug = await bugTask([together, reproduction, edit]);
 
-    // The combined answer is rejected before anything is written; it uses
-    // an iteration with the counts unchanged.
+    // The combined answer is rejected before anything is written: it costs
+    // a model call, but no check and no iteration.
     expect(bug.asked[1]?.lastRejection).toMatch(/only new test files/);
     expect(bug.asked[1]?.lastRejection).toContain('src/a.ts');
-    expect(bug.curve).toEqual([0, 0, 1, 0]);
+    expect(bug.curve).toEqual([0, 1, 0]);
     expect(bug.result).toMatchObject({
       status: 'green',
       applied: 2,
-      iterations: 3,
+      iterations: 2,
+      modelCalls: 3,
     });
     expect(bug.asked.map((a) => a.step)).toEqual([
       'reproduce',
@@ -121,7 +122,7 @@ describe('runTaskLoop, bug task', () => {
   it('rejects a reproduction that does not fail, discards it, and tells the model why', async () => {
     const bug = await bugTask([reproduction], {
       reproFails: false,
-      rules: { maxIterations: 3, patience: 2 },
+      rules: { maxIterations: 3, patience: 2, maxModelCalls: 10 },
     });
 
     // Each attempt is applied and checked (a normal check), then discarded.
@@ -145,7 +146,7 @@ describe('runTaskLoop, bug task', () => {
   it('discards a reproduction that adds type errors, and names them', async () => {
     const bug = await bugTask([reproduction], {
       repro: 'typeError',
-      rules: { maxIterations: 2, patience: 5 },
+      rules: { maxIterations: 2, patience: 5, maxModelCalls: 10 },
     });
     // More tests fail, but the reproduction would be locked with a type
     // error in it, and the run could never go green. Its check stays on the
@@ -165,7 +166,7 @@ describe('runTaskLoop, bug task', () => {
   it("discards a reproduction whose test file didn't load, and gives the load error", async () => {
     const bug = await bugTask([reproduction], {
       repro: 'doesNotLoad',
-      rules: { maxIterations: 2, patience: 5 },
+      rules: { maxIterations: 2, patience: 5, maxModelCalls: 10 },
     });
     // The count rose (a suite that doesn't load counts as a failure), but no
     // test ran, so nothing was reproduced.
@@ -212,7 +213,7 @@ describe('runTaskLoop, bug task', () => {
     const bug = await bugTask([reproduction], {
       reproFails: false,
       discardFails: true,
-      rules: { maxIterations: 2, patience: 2 },
+      rules: { maxIterations: 2, patience: 2, maxModelCalls: 10 },
     });
     expect(bug.asked[1]?.lastRejection).toContain(
       `Not all discarded: ${REPRO}: not a file`
@@ -231,10 +232,65 @@ describe('runTaskLoop, bug task', () => {
       step: 'fix',
       lastRejection: expect.stringContaining(REPRO),
     });
-    // One rejected fix after the reproduction doesn't end the task: the
-    // count rose on purpose, so "stopped falling" counts from the reproduction.
-    expect(bug.curve).toEqual([0, 1, 1, 0]);
+    // The rejected fix never ran, so the curve has no row for it.
+    expect(bug.curve).toEqual([0, 1, 0]);
     expect(bug.result).toMatchObject({ status: 'green', applied: 2 });
+  });
+
+  it('two rejected answers in a row in the fix step neither end the loop nor report an iteration', async () => {
+    const touchRepro: EditsResponse = {
+      edits: [{ path: REPRO, search: 'fails', replace: 'passes' }],
+    };
+    // patience 2: before, two rejections with unchanged counts ended the run
+    // as "stopped falling" without one fix tried in the sandbox.
+    const bug = await bugTask([reproduction, touchRepro, touchRepro, edit]);
+
+    expect(bug.curve).toEqual([0, 1, 0]);
+    expect(bug.result).toMatchObject({
+      status: 'green',
+      applied: 2,
+      iterations: 2,
+      modelCalls: 4,
+    });
+    expect(bug.asked.map((a) => a.step)).toEqual([
+      'reproduce',
+      'fix',
+      'fix',
+      'fix',
+    ]);
+  });
+
+  it("rejections in the reproduce step don't use up the fix step's checks", async () => {
+    // Three rejected answers, then the reproduction and the fix: two checks,
+    // exactly the iteration cap.
+    const bug = await bugTask(
+      [together, together, together, reproduction, edit],
+      { rules: { maxIterations: 2, patience: 2, maxModelCalls: 10 } }
+    );
+
+    expect(bug.curve).toEqual([0, 1, 0]);
+    expect(bug.result).toMatchObject({
+      status: 'green',
+      applied: 2,
+      iterations: 2,
+      modelCalls: 5,
+    });
+  });
+
+  it('ends gave_up at the model-call cap, naming it, when no answer is ever taken', async () => {
+    const bug = await bugTask([together], {
+      rules: { maxIterations: 6, patience: 2, maxModelCalls: 4 },
+    });
+
+    expect(bug.asked).toHaveLength(4);
+    expect(bug.curve).toEqual([0]);
+    expect(bug.result).toEqual({
+      status: 'gave_up',
+      reason: 'reached the cap of 4 model calls with no proposal accepted',
+      iterations: 0,
+      applied: 0,
+      modelCalls: 4,
+    });
   });
 
   it('checks the scope before the step, so the policy sees every answer', async () => {
@@ -253,7 +309,7 @@ describe('runTaskLoop, bug task', () => {
       discard: async () => ok(null),
       onIteration: () => {},
       baseline: clean,
-      rules: { maxIterations: 2, patience: 5 },
+      rules: { maxIterations: 2, patience: 5, maxModelCalls: 2 },
     });
     // Once per answer, and a refused answer never reaches apply (where the
     // hub would check, and count, its refusals a second time).
@@ -287,6 +343,56 @@ describe('runTaskLoop, bug task', () => {
     });
     expect(result).toMatchObject({ status: 'green', applied: 1 });
     expect(asked).toEqual([{ step: undefined }]);
+  });
+
+  it('a task that is not a bug runs as before, except that rejections no longer count', async () => {
+    // Bad JSON, a refused patch, then an edit that makes the checks pass
+    // with one red check in between: the stop rules see two checks.
+    const answers = [
+      fail('invalid', 'bad JSON'),
+      ok(edit),
+      ok(edit),
+      ok(edit),
+    ] as const;
+    const refuse = [true, false, false];
+    const counts = [0, 1, 0];
+    const iterations: [number, number][] = [];
+    const notes: string[] = [];
+    let k = 0;
+    const result = await runTaskLoop({
+      check: async () => ({
+        typeErrors: 0,
+        testsFailed: counts.shift()!,
+        someTestFailed: false,
+        errors: '',
+      }),
+      propose: async ({ step }) => {
+        expect(step).toBeUndefined();
+        return answers[k++]!;
+      },
+      apply: async () =>
+        refuse.shift() ? fail('forbidden', 'deny src/auth/**') : ok(null),
+      onIteration: (n, c) => iterations.push([n, c.testsFailed]),
+      onNote: (note) => notes.push(note),
+      baseline: clean,
+      rules: { maxIterations: 2, patience: 2, maxModelCalls: 10 },
+    });
+
+    expect(iterations).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 0],
+    ]);
+    expect(result).toMatchObject({
+      status: 'green',
+      reason: 'all checks pass',
+      iterations: 2,
+      applied: 2,
+      modelCalls: 4,
+    });
+    // The rejections still go out as notes, one per model call.
+    expect(notes).toContain('Model call 1: answer rejected (bad JSON)');
+    expect(notes).toContain('Model call 2: patch refused (deny src/auth/**)');
   });
 });
 
@@ -354,16 +460,59 @@ describe('runTaskLoop', () => {
     expect(given.result).toEqual(own.result);
   });
 
-  it('counts refused patches as iterations and gives up', async () => {
+  it('gives up at the model-call cap when every patch is refused, with no check run', async () => {
+    const check = vi.fn(async () => ({ ...clean, errors: '' }));
+    const iterations: number[] = [];
     const result = await runTaskLoop({
-      check: async () => ({ ...clean, errors: '' }),
+      check,
       propose: async () => ok(edit),
       apply: async () => fail('invalid', 'deny src/auth/**'),
+      onIteration: (n) => iterations.push(n),
+      baseline: clean,
+      rules: { maxIterations: 3, patience: 2, maxModelCalls: 5 },
+    });
+    expect(result).toEqual({
+      status: 'gave_up',
+      reason: 'reached the cap of 5 model calls with no proposal accepted',
+      iterations: 0,
+      applied: 0,
+      modelCalls: 5,
+    });
+    // Only the baseline was checked.
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(iterations).toEqual([0]);
+  });
+
+  it('names the cap without "no proposal accepted" once one was applied', async () => {
+    // One fix that leaves a test red, then answers that are all refused:
+    // patience never sees a second check, so the cap ends it.
+    let n = 0;
+    const result = await runTaskLoop({
+      check: async () => ({
+        typeErrors: 0,
+        testsFailed: 1,
+        someTestFailed: true,
+        errors: '',
+      }),
+      first: {
+        typeErrors: 0,
+        testsFailed: 1,
+        someTestFailed: true,
+        errors: '',
+      },
+      propose: async () => ok(edit),
+      apply: async () =>
+        n++ === 0 ? ok(null) : fail('invalid', 'deny src/auth/**'),
       onIteration: () => {},
       baseline: clean,
-      rules: { maxIterations: 3, patience: 2 },
+      rules: { maxIterations: 6, patience: 2, maxModelCalls: 3 },
     });
-    expect(result).toMatchObject({ status: 'gave_up', applied: 0 });
+    expect(result).toMatchObject({
+      status: 'gave_up',
+      reason: 'reached the cap of 3 model calls',
+      iterations: 1,
+      applied: 1,
+    });
   });
 
   it('passes the last rejection back to the model', async () => {
@@ -374,7 +523,7 @@ describe('runTaskLoop', () => {
       apply: async () => ok(null),
       onIteration: () => {},
       baseline: clean,
-      rules: { maxIterations: 2, patience: 5 },
+      rules: { maxIterations: 2, patience: 5, maxModelCalls: 2 },
     });
     expect(propose.mock.calls[1]).toEqual([
       expect.objectContaining({ lastRejection: 'bad JSON' }),
@@ -393,12 +542,14 @@ describe('runTaskLoop', () => {
       halt: () => (refusals >= 3 ? '3 policy refusals' : null),
       onIteration: () => {},
       baseline: clean,
-      rules: { maxIterations: 10, patience: 10 },
+      rules: { maxIterations: 10, patience: 10, maxModelCalls: 10 },
     });
+    // The refusals never ran a check, so none counted as an iteration.
     expect(result).toMatchObject({
       status: 'halted',
       reason: '3 policy refusals',
-      iterations: 3,
+      iterations: 0,
+      modelCalls: 3,
     });
   });
 });

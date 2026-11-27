@@ -58,7 +58,7 @@ Newest first. Each entry: what we saw, the evidence, what we changed.
 ## Not acted on yet
 
 - **Tokens are logged, not shown** (#44). Each answered model call leaves one log line with the API's `usage` (prompt, completion and total tokens), so a task's log says what each prompt cost. The Agent tab doesn't show them yet, and nothing adds them up per task.
-- **The checks table shows iterations that never ran a check** (a refused answer appears as a row with unchanged counts). Viewers read it as "the reproduction passed".
+- **The checks table showed iterations that never ran a check** (a refused answer appeared as a row with unchanged counts; viewers read it as "the reproduction passed"). Acted on in #46: only checks that ran in the sandbox are iterations, and a refused answer stays in the log (`Model call k: …`). Still open: the Run tab shows those calls only through the Log tab, not beside the steps.
 - **The inference API sometimes answers with no content** (4 of 5 INC-1043 runs, always after 40–45 s, never in INC-1042). Since #44 the failure names the reply's `finish_reason` (`length`, `content_filter`, ...) and reaches the task log, so the next empty reply on a live run tells us which it is. Not diagnosed yet.
 - **The prompt itself isn't visible anywhere.** You can reconstruct it from the code above, but there's no record of the exact messages a task sent.
 

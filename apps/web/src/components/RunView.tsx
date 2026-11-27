@@ -429,10 +429,9 @@ export const RunView = ({ task }: { task: TaskSnapshot }) => {
   const steps = runSteps(task);
   const [open, setOpen] = useState<number | null>(null);
   const live = task.status === 'queued' || task.status === 'working';
-  const refusedEdits = task.iterations.reduce(
-    (n, it) => n + (it.refused?.length ?? 0),
-    0
-  );
+  // A refused answer runs no check, so it has no step: count the refusals
+  // off the task. What the model said on those calls is in the Log tab.
+  const refusedEdits = task.refusals.length;
   const notTaken = steps.filter((s) => s.verdict === 'rejected').length;
   const repro = steps.find((s) => s.verdict === 'reproduced');
   const green = steps.find((s) => s.verdict === 'green');

@@ -121,9 +121,11 @@ const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 const MAX_PROMPT_SECTION_CHARS = 4000;
 const MAX_REASONING_CHARS = 2000;
 const MAX_REJECTION_CHARS = 1000;
-// The loop's own note for an answer it didn't take (fixLoop.ts).
-const REJECTION_NOTE =
-  /^Iteration \d+: (?:answer rejected|patch refused) \((.*)\)$/s;
+// The loop's own note for an answer that was checked and then not taken (a
+// reproduction that didn't fail; fixLoop.ts). An answer refused before the
+// sandbox has no iteration: its notes (`Model call k: …`) and refusals stay
+// log and `policy_refused` events.
+const REJECTION_NOTE = /^Iteration \d+: answer rejected \((.*)\)$/s;
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
@@ -455,8 +457,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   let refusals = 0;
   const touched = new Set<string>();
   // Recorded for the Agent tab, never read back by the loop: the prompt of
-  // the first call, and what the model answered in the iteration under way,
-  // which goes out with that iteration's check.
+  // the first call, and what the model answered on the call under way,
+  // which goes out with that call's check if it gets one. A call refused
+  // before the sandbox gets no check; the next call starts afresh.
   let promptRecorded = false;
   let answer: IterationAnswer = {};
   const checkRoleScope = (edits: Edit[]): Result<null> => {
@@ -496,6 +499,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           ? `${refusals} edits refused by the ${policy.label} policy`
           : null,
     propose: async ({ latest, lastRejection, step, reproduction }) => {
+      answer = {};
       const paths = [
         ...new Set([
           ...contextFiles,
@@ -568,7 +572,6 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
         testsFailed: c.testsFailed,
         ...answer,
       });
-      answer = {};
     },
     onNote: (message) => {
       const rejected = REJECTION_NOTE.exec(message);

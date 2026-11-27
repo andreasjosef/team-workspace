@@ -55,9 +55,14 @@ type LoopDeps = {
   // Checked before every proposal: a reason stops the loop as `halted` (the
   // hub uses it for "too many policy refusals").
   halt?: () => string | null;
+  // Once per check that ran in the sandbox (0 is the baseline). An answer
+  // refused before the sandbox gets notes, never an iteration.
   onIteration: (n: number, counts: CheckCounts) => void;
+  // `Model call k: …` for each answer and why it was rejected; `Iteration
+  // n: answer rejected (…)` for a reproduction that ran and was discarded.
   onNote?: (note: string) => void;
   baseline: CheckCounts;
+  // The stop rules and the model-call cap (stop.ts).
   rules?: StopRules;
 };
 
@@ -84,8 +89,11 @@ type BugState =
 export type TaskLoopResult = {
   status: 'green' | 'gave_up' | 'halted';
   reason: string;
+  // Checks that ran in the sandbox after the baseline.
   iterations: number;
   applied: number;
+  // Every answer asked for, rejected ones included.
+  modelCalls: number;
 };
 
 // The answer the loop goes on with, before anything is applied: valid, in
@@ -159,19 +167,23 @@ export const runTaskLoop = async (
 ): Promise<TaskLoopResult> => {
   const rules = deps.rules ?? defaultStopRules;
   let latest = deps.first ?? (await deps.check());
+  // One row per check that ran in the sandbox, the baseline first. An answer
+  // refused before the sandbox adds no row: the curve, patience and the
+  // iteration cap see only checks that ran.
   const history: CheckCounts[] = [latest];
   deps.onIteration(0, latest);
   let lastRejection: string | undefined;
   let applied = 0;
+  let modelCalls = 0;
   let bug: BugState | undefined = deps.reproduceFirst
     ? { step: 'reproduce' }
     : undefined;
 
   for (;;) {
     const n = history.length;
+    const end = { iterations: n - 1, applied, modelCalls };
     const halted = deps.halt?.();
-    if (halted)
-      return { status: 'halted', reason: halted, iterations: n - 1, applied };
+    if (halted) return { status: 'halted', reason: halted, ...end };
 
     const decision = decide(
       history.slice(bug?.step === 'fix' ? bug.since : 0),
@@ -179,7 +191,7 @@ export const runTaskLoop = async (
       rules
     );
     if (decision.stop && (decision.status === 'gave_up' || applied > 0)) {
-      return { ...decision, iterations: n - 1, applied };
+      return { ...decision, ...end };
     }
     if (n - 1 >= rules.maxIterations) {
       return {
@@ -187,11 +199,21 @@ export const runTaskLoop = async (
         reason: applied
           ? `reached ${rules.maxIterations} iterations`
           : 'no proposal was accepted',
-        iterations: n - 1,
-        applied,
+        ...end,
+      };
+    }
+    // Rejected answers use no iteration, so this cap is what bounds a model
+    // that keeps answering outside the rules (and what a run costs).
+    if (modelCalls >= rules.maxModelCalls) {
+      return {
+        status: 'gave_up',
+        reason: `reached the cap of ${rules.maxModelCalls} model calls${applied ? '' : ' with no proposal accepted'}`,
+        ...end,
       };
     }
 
+    modelCalls++;
+    const call = `Model call ${modelCalls}`;
     const proposal = await deps.propose({
       latest,
       applied,
@@ -199,45 +221,46 @@ export const runTaskLoop = async (
       ...(bug ? { step: bug.step } : {}),
       ...(bug?.step === 'fix' ? { reproduction: bug.reproduction } : {}),
     });
-    // An invalid answer or a refused patch still uses up an iteration, with
-    // the counts unchanged, so a model that keeps failing hits the stop rules.
+    if (proposal.success)
+      deps.onNote?.(
+        `${call}: ${proposal.value.reasoning ?? 'proposing edits'}`
+      );
+    // An invalid answer or a refused patch never reaches the sandbox: it adds
+    // no check, and the model hears why on its next call.
     const answer = vetAnswer(proposal, deps.checkScope, bug);
     if (!answer.success) {
       lastRejection = answer.message;
-      deps.onNote?.(`Iteration ${n}: answer rejected (${answer.message})`);
+      deps.onNote?.(`${call}: answer rejected (${answer.message})`);
+      continue;
+    }
+    const { edits } = answer.value;
+    const result = await deps.apply(edits);
+    if (!result.success) {
+      lastRejection = result.message;
+      deps.onNote?.(`${call}: patch refused (${result.message})`);
+      continue;
+    }
+    latest = await deps.check();
+    const refused =
+      deps.reproduceFirst && bug?.step === 'reproduce'
+        ? reproductionGate(latest, deps.baseline)
+        : null;
+    if (deps.reproduceFirst && refused) {
+      // A check that ran, so it's in the curve like any other, then taken
+      // out again: a test that doesn't show the bug never reaches the diff.
+      const paths = edits.map((e) => e.path);
+      const discarded = await deps.discard(paths);
+      lastRejection = `${refused}\n${discarded.success ? `Discarded: ${paths.join(', ')}` : `Not all discarded: ${discarded.message}`}`;
+      deps.onNote?.(`Iteration ${n}: answer rejected (${lastRejection})`);
     } else {
-      deps.onNote?.(
-        `Iteration ${n}: ${answer.value.reasoning ?? 'applying edits'}`
-      );
-      const { edits } = answer.value;
-      const result = await deps.apply(edits);
-      if (!result.success) {
-        lastRejection = result.message;
-        deps.onNote?.(`Iteration ${n}: patch refused (${result.message})`);
-      } else {
-        latest = await deps.check();
-        const refused =
-          deps.reproduceFirst && bug?.step === 'reproduce'
-            ? reproductionGate(latest, deps.baseline)
-            : null;
-        if (deps.reproduceFirst && refused) {
-          // Shown in the curve like any check, then taken out again: a test
-          // that doesn't show the bug never reaches the diff.
-          const paths = edits.map((e) => e.path);
-          const discarded = await deps.discard(paths);
-          lastRejection = `${refused}\n${discarded.success ? `Discarded: ${paths.join(', ')}` : `Not all discarded: ${discarded.message}`}`;
-          deps.onNote?.(`Iteration ${n}: answer rejected (${lastRejection})`);
-        } else {
-          lastRejection = undefined;
-          applied++;
-          if (bug?.step === 'reproduce') {
-            bug = {
-              step: 'fix',
-              reproduction: edits.map((e) => e.path),
-              since: n,
-            };
-          }
-        }
+      lastRejection = undefined;
+      applied++;
+      if (bug?.step === 'reproduce') {
+        bug = {
+          step: 'fix',
+          reproduction: edits.map((e) => e.path),
+          since: n,
+        };
       }
     }
     history.push({
