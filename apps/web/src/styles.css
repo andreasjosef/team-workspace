@@ -247,33 +247,190 @@ table.iters th {
   font-weight: 400;
 }
 
-.diff {
+.diff-empty {
+  padding: 1rem 1.2rem;
   font-family: var(--font-mono);
-  font-size: 0.8em;
-  padding: 0.5rem 0;
-  margin: 0;
+  font-size: 0.85rem;
 }
-.diff div {
-  padding: 0 1rem;
-  white-space: pre;
+.diff-wrap {
+  display: flex;
+  flex-direction: column;
 }
-.diff .add {
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--bg-soft);
+}
+.diff-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.diff-theme-picker {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  background: var(--bg);
+  padding: 0.18rem;
+  border-radius: 8px;
+}
+.diff-theme-btn {
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-text);
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.diff-theme-btn:hover {
+  color: var(--text);
+  background: var(--bg-mid);
+}
+.diff-theme-btn.active {
+  color: var(--text);
+  background: var(--bg-soft);
+  font-weight: 600;
+}
+
+.diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+.diff-file-card {
+  background: var(--bg);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--bg-soft);
+}
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--bg-soft);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.diff-file-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.diff-file-path {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-status {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.06rem 0.4rem;
+  border-radius: 999px;
+  background: var(--bg-mid);
+}
+.diff-status-add {
   color: var(--green);
-  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+.diff-status-del {
+  color: var(--red);
+}
+.diff-file-stats {
+  display: inline-flex;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.diff-stat-add {
+  color: var(--green);
+  font-weight: 600;
+}
+.diff-stat-del {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.diff-code {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  padding: 0.35rem 0;
+}
+.diff-row {
+  display: grid;
+  grid-template-columns: 2.6rem 2.6rem 1.35rem minmax(0, 1fr);
+  align-items: baseline;
+  min-width: max-content;
+}
+.diff-ln {
+  user-select: none;
+  text-align: right;
+  padding: 0 0.45rem;
+  color: var(--faint);
+  font-size: 0.72rem;
+}
+.diff-sign {
+  user-select: none;
+  text-align: center;
+  color: var(--muted);
+}
+.diff-text {
+  white-space: pre;
+  padding-right: 1rem;
+  color: var(--text);
+}
+.diff-row-add {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
   box-shadow: inset 2px 0 0 var(--green);
 }
-.diff .del {
-  color: var(--red);
-  background: color-mix(in srgb, var(--red) 14%, transparent);
+.diff-row-add .diff-sign,
+.diff-row-add .diff-ln {
+  color: var(--green);
+}
+.diff-plain .diff-row-add .diff-text {
+  color: var(--green);
+}
+.diff-row-del {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
   box-shadow: inset 2px 0 0 var(--red);
 }
-.diff .hunk {
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
+.diff-row-del .diff-sign,
+.diff-row-del .diff-ln {
+  color: var(--red);
 }
-.diff .file {
-  color: var(--text);
-  font-weight: 700;
+.diff-plain .diff-row-del .diff-text {
+  color: var(--red);
+}
+.diff-row-hunk {
+  background: color-mix(in srgb, var(--blue) 9%, transparent);
+  margin: 0.2rem 0;
+}
+.diff-row-hunk .diff-text {
+  color: var(--blue);
+  font-size: 0.74rem;
+}
+.diff-row-meta .diff-text {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .log {
