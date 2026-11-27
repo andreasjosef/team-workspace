@@ -12,7 +12,7 @@ export const Layout = () => {
     <div className="shell">
       <header className="topbar">
         <Link to="/cs" className="brand">
-          Team Workspace
+          Sandbugs
           <small>From customer report to proposed fix</small>
         </Link>
         {reviewing && (

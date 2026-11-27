@@ -1,4 +1,4 @@
-# Team Workspace
+# Sandbugs
 
 **From customer report to reviewed pull request, without a developer reproducing anything, and without trusting the report.** A support rep forwards a customer's report; an agent reproduces it in a throwaway sandbox, checks it against the team's decisions, and either opens a pull request with the fix or stops and says why. The hub drafts a reply the rep can send the customer. The hub never merges: a developer does, in GitHub.
 

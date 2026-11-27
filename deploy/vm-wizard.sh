@@ -249,7 +249,7 @@ check() { # check "name" <pass|fail> "detail"
   fi
 }
 
-banner "Team Workspace VM on Vultr"
+banner "Sandbugs VM on Vultr"
 printf '\n## VM run %s\n\n' "$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$FINDINGS"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
