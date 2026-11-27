@@ -32,7 +32,7 @@ export const ForwardButton = ({
   });
 
   return (
-    <div className="forward">
+    <div className="forward" data-tour="forward">
       <button
         className="btn btn-primary btn-big"
         disabled={forward.isPending}

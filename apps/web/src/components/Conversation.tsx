@@ -38,7 +38,7 @@ export const Conversation = ({
   forward?: ReactNode;
 }) => (
   <ol className="thread">
-    <li className="bubble bubble-in">
+    <li className="bubble bubble-in" data-tour="report">
       <div className="bubble-from">
         <span>{from}</span>
         <span>{label}</span>
