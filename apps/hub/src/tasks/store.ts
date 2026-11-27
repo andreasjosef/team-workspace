@@ -1,8 +1,9 @@
-import type {
-  CreateTaskInput,
-  EventEnvelope,
-  TaskEvent,
-  TaskSnapshot,
+import {
+  isFinalStatus,
+  type CreateTaskInput,
+  type EventEnvelope,
+  type TaskEvent,
+  type TaskSnapshot,
 } from '@app/shared';
 import { randomUUID } from 'node:crypto';
 
@@ -20,12 +21,16 @@ type TaskRecord = Omit<TaskSnapshot, 'hasDiff'> & {
 
 const MAX_TASKS = 200;
 const MAX_EVENTS = 5000;
-const FINISHED = new Set(['pr_opened', 'gave_up', 'flagged', 'error']);
 
 export const createTaskStore = () => {
   const tasks = new Map<string, TaskRecord>();
 
-  const create = (input: CreateTaskInput) => {
+  // `fixtureOf`: the flagged task a fixture run is for (set only by the
+  // fixture route, never from a request body).
+  const create = (
+    input: CreateTaskInput,
+    { fixtureOf = null }: { fixtureOf?: string | null } = {}
+  ) => {
     // Forget the oldest task once full; Maps iterate in insertion order.
     if (tasks.size >= MAX_TASKS) tasks.delete(tasks.keys().next().value!);
     const id = randomUUID();
@@ -47,6 +52,10 @@ export const createTaskStore = () => {
       blocked: [],
       previewUrl: null,
       pr: null,
+      prompt: null,
+      replyDraft: null,
+      fixtureOf,
+      fixtureRun: null,
       diff: null,
       events: [],
       listeners: new Set(),
@@ -63,12 +72,13 @@ export const createTaskStore = () => {
       case 'phase':
         t.phase = e.phase;
         break;
-      case 'iteration':
-        t.iterations.push({
-          n: e.n,
-          typeErrors: e.typeErrors,
-          testsFailed: e.testsFailed,
-        });
+      case 'iteration': {
+        const { type: _type, ...iteration } = e;
+        t.iterations.push(iteration);
+        break;
+      }
+      case 'prompt':
+        t.prompt = { sections: e.sections, repo: e.repo };
         break;
       case 'context':
         t.context = { files: e.files, decisions: e.decisions };
@@ -90,6 +100,12 @@ export const createTaskStore = () => {
         break;
       case 'pr':
         t.pr = { url: e.url, number: e.number, draft: e.draft };
+        break;
+      case 'reply_draft':
+        t.replyDraft = { text: e.text, source: e.source };
+        break;
+      case 'fixture_run':
+        t.fixtureRun = e.taskId;
         break;
     }
   };
@@ -137,7 +153,7 @@ export const createTaskStore = () => {
       if (t) t.diff = diff;
     },
     diff: (id: string) => tasks.get(id)?.diff ?? null,
-    isFinished: (id: string) => FINISHED.has(tasks.get(id)?.status ?? ''),
+    isFinished: (id: string) => isFinalStatus(tasks.get(id)?.status),
   };
 };
 

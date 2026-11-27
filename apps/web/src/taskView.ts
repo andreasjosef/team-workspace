@@ -43,6 +43,15 @@ const workingDetail = (t: TaskSnapshot) => {
 };
 
 export const outcome = (t: TaskSnapshot): Outcome => {
+  // A fixture run always ends flagged; it reports on the layers, not a fix.
+  if (t.fixtureOf !== null && t.status === 'flagged')
+    return {
+      headline: 'Fixture: a scripted hostile proposal, not the model',
+      detail:
+        'The hub replayed what the flagged report asked for through the real policy and sandbox. Nothing was published.',
+      customer: null,
+      tone: 'red',
+    };
   switch (t.status) {
     case 'queued':
       return {
@@ -150,4 +159,74 @@ export const timeAgo = (iso: string, now = Date.now()) => {
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86_400)}d ago`;
+};
+
+// Who wrote the reply draft, in the rep's words.
+export const replyDraftLabel = (d: { source: 'model' | 'template' }) =>
+  d.source === 'model' ? 'Drafted by the model' : 'Drafted from a template';
+
+// Containment, layer by layer: the input scanner, the role policy, the
+// `.hub/` lock and the network. `taskLayers` reads one task's own events;
+// `fixtureLayers` puts the flagged report's scanner next to its fixture run,
+// which tried each of the other layers in turn.
+//
+// Checks and fixes run with `--network none`: a call out of the sandbox has
+// no route, so the sandbox reports it `blocked`. The egress proxy only
+// governs installs, so it isn't the layer that stops it.
+export type LayerState =
+  'flagged' | 'not fired' | 'refused' | 'blocked' | 'not reached' | 'waiting';
+export type Layer = { name: string; state: LayerState; detail: string | null };
+
+export const NETWORK_LAYER = 'Network: no way out of the sandbox';
+
+const isHubPath = (path: string) => path === '.hub' || path.startsWith('.hub/');
+
+export const taskLayers = (task: TaskSnapshot): Layer[] =>
+  layers(task, task, 'not fired');
+
+export const fixtureLayers = (
+  flagged: TaskSnapshot,
+  fixture: TaskSnapshot | null
+): Layer[] => {
+  const ended =
+    fixture !== null &&
+    fixture.status !== 'queued' &&
+    fixture.status !== 'working';
+  return layers(flagged, fixture, ended ? 'not reached' : 'waiting');
+};
+
+// `scanned` is the task whose report the scanner read; `tried` the one whose
+// edits and runs met the other layers. `idle` is a layer that didn't fire.
+const layers = (
+  scanned: TaskSnapshot,
+  tried: TaskSnapshot | null,
+  idle: LayerState
+): Layer[] => {
+  const refusal = (hub: boolean) =>
+    tried?.refusals.find((r) => isHubPath(r.path) === hub);
+  const policy = refusal(false);
+  const lock = refusal(true);
+  const blocked = tried?.blocked.find((b) => b.startsWith('network: '));
+  return [
+    {
+      name: 'Input scanner',
+      state: scanned.inputSignals.length ? 'flagged' : 'not fired',
+      detail: scanned.inputSignals.join(', ') || null,
+    },
+    {
+      name: 'Role policy',
+      state: policy ? 'refused' : idle,
+      detail: policy ? `${policy.path} (${policy.rule})` : null,
+    },
+    {
+      name: '.hub/ lock',
+      state: lock ? 'refused' : idle,
+      detail: lock ? `${lock.path} (${lock.rule})` : null,
+    },
+    {
+      name: NETWORK_LAYER,
+      state: blocked ? 'blocked' : idle,
+      detail: blocked ? blocked.slice('network: '.length) : null,
+    },
+  ];
 };

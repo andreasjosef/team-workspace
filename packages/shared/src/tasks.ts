@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { ContextDoc, PullRequest, TaskStatus } from './events.ts';
+import {
+  AgentPrompt,
+  ContextDoc,
+  IterationAnswer,
+  PullRequest,
+  ReplyDraft,
+  TaskStatus,
+} from './events.ts';
 import { Role, TaskKind } from './roles.ts';
 
 // A task is one request from one role: "discount codes fail at checkout",
@@ -22,6 +29,7 @@ export const IterationSummary = z.object({
   n: z.number(),
   typeErrors: z.number(),
   testsFailed: z.number(),
+  ...IterationAnswer.shape,
 });
 export type IterationSummary = z.infer<typeof IterationSummary>;
 
@@ -49,6 +57,15 @@ export const TaskSnapshot = z.object({
   // The pull request, once the hub opened one. A developer merges it on
   // GitHub; the hub never does.
   pr: PullRequest.nullable(),
+  // The prompt of the agent's first call, once it made one.
+  prompt: AgentPrompt.nullable(),
+  // The reply drafted for the support rep, once the task has ended.
+  replyDraft: ReplyDraft.nullable(),
+  // A fixture run: the flagged task it was started for. The hub drove it
+  // with a scripted hostile proposal, not the model, and it never publishes.
+  fixtureOf: z.string().nullable(),
+  // On a flagged task: its fixture run, once one was started.
+  fixtureRun: z.string().nullable(),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshot>;
 

@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router';
 import { Status } from '../components/common.tsx';
 import { OutcomeCard } from '../components/Outcome.tsx';
 import { ReceiptTabs } from '../components/Receipt.tsx';
+import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
 import { useTask } from '../queries.ts';
 
 // One task on its own page, linkable from anywhere. Same
@@ -33,9 +34,12 @@ export const TaskPage = () => {
         <Status status={t.status} />
       </div>
       <OutcomeCard task={t} />
+      <ReplyDraftBox task={t} />
       <section className="message">
         <div className="untrusted-label">
-          The customer's report · treated as untrusted
+          {t.fixtureOf === null
+            ? "The customer's report · treated as untrusted"
+            : "The fixture's script · fixed in the hub's code, not the model"}
         </div>
         <p className="untrusted">{t.input.text}</p>
       </section>

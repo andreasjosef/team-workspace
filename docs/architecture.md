@@ -50,7 +50,7 @@ A role is a policy file in the product repo, `.hub/roles/<role>.json`, read at s
 
 ## A task
 
-One task is one request from one role, and it ends `pr_opened` (green, a pull request waits for a developer), gave up, flagged, or errored. A task whose text the input scanner flagged never opens a pull request: where it would, it ends flagged. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
+One task is one request from one role, and it ends `pr_opened` (green, a pull request waits for a developer), gave up, flagged, or errored. A task whose text the input scanner flagged never opens a pull request: where it would, it ends flagged. A flagged task can start a **fixture run** (`POST /api/tasks/:id/fixture`; any other task is `forbidden`): its own task, through the same queue, driven by the scripted hostile proposal in `fixture.ts` instead of the model, linked both ways (`fixtureOf`, `fixtureRun`). It always ends flagged and never reaches the publisher. Code: `apps/hub/src/tasks/pipeline.ts` (real) and `mockRunner.ts` (scripted).
 
 | Phase    | Where   | Network             | What                                                                                                                                                                                                                                                                                                                   |
 | -------- | ------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -66,6 +66,8 @@ queued → working → pr_opened
                  ↘ flagged
                  ↘ error (also: patch refused or publishing failed)
 ```
+
+Once the status is final, the hub drafts a reply for the support rep (a `reply_draft` event, never a status change): one more model call for `pr_opened`, `gave_up` and `error`, with the report only inside `wrapUntrusted`; a fixed template for `flagged`. `checkReplyDraft` (`packages/agent/src/reply.ts`) holds a model draft to plain text, 1200 characters, no URLs, email addresses or promised dates, and a fix in review never described as shipped; a draft that breaks a rule, fails or times out is the template. The hub never sends it.
 
 "Green" means no more type errors and failing tests than the baseline, **and** at least one accepted proposal: a task starts green, so the plain stop rule would end it before it did anything (`runTaskLoop` in `packages/agent/src/fixLoop.ts`).
 
@@ -88,6 +90,8 @@ What the agent sees, all of it listed on the task's receipt:
 4. Decisions whose `files:` list names one of those files, then decisions whose title matches (`matchDecisions`)
 5. After the first edit: the current errors and the files they point at
 
+The receipt's Agent tab shows the first prompt as the model got it, in titled sections the pipeline caps before they go into the `prompt` event (`promptSections`, built from the same parts as the messages), with a link to `.hub/` at the task's base commit. Each `iteration` event carries the model's reasoning, the edits it proposed, any the policy refused and why an answer wasn't taken. Recorded only: the loop never reads them back.
+
 Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `date`, `by`, `files`), versioned with the code they explain.
 
 ## Containment, and where each rule lives
@@ -104,6 +108,8 @@ Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `
 | What gets proposed  | The diff holds only paths the agent edited through the policy check. Anything else a test run wrote in the worktree (`.hub/` included) never reaches it                                                                        | `diffPaths` in `workspace.ts`                    |
 | What gets published | Only a green task's diff, on its own branch. `checkPatch` re-checks every path against the role, and refuses symlinks, binary patches and mode changes. `git apply` runs in a fresh worktree of the hub repo, never on `main`  | `pipeline.ts`, `publishBranch` in `workspace.ts` |
 | Audit               | Every command, edit, refusal, block, pull request and status change is an event on the task's stream                                                                                                                           | `TaskEvent` in `packages/shared`                 |
+
+The receipt's Containment tab reads four of these layers off the task's events: the input scanner, the role policy, the `.hub/` lock and the network (`taskLayers` in `apps/web/src/taskView.ts`). On a flagged task it also shows its fixture run, layer by layer. The fixture's call to the collector is stopped by the Network row's `--network none` (no route out), not by the egress proxy, which only governs installs.
 
 ## Dependency cache
 

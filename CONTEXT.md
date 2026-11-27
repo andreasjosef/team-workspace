@@ -52,6 +52,10 @@ _Avoid_: Permissions, write access
 A short record in the product repo of what the team decided, why, and who decided, linked to the files it affects.
 _Avoid_: ADR, rule, policy
 
+**Fixture run**:
+A task the hub starts for a flagged task to show "what if the model had obeyed?": the real pipeline, driven by a scripted hostile proposal fixed in the hub's code instead of the model. It always ends flagged and never opens a pull request.
+_Avoid_: Simulation, replay, dry run
+
 ### Outcomes
 
 **Outcome**:
@@ -94,3 +98,7 @@ _Avoid_: Deploy, merge, approval
 **Receipt**:
 The account of a task: what the agent saw, what it tried, and what was refused or blocked. It becomes the pull request's description.
 _Avoid_: Log, report, summary
+
+**Reply draft**:
+The reply the hub drafts for the support rep to send the customer once a task has ended: by the model from hub facts, or from a fixed template (flagged tasks, and any model draft that breaks the rules). The rep edits and sends it; the hub never sends anything.
+_Avoid_: Response, answer, auto-reply

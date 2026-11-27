@@ -3,11 +3,13 @@ import {
   buildTaskMessages,
   checkCommand,
   checkPolicy,
+  draftReply,
   filesFromErrors,
   isCreate,
   isTestPath,
   matchDecisions,
   parseEditsResponse,
+  promptSections,
   rankFiles,
   readCheckOutput,
   resolveInside,
@@ -17,8 +19,17 @@ import {
   type CheckOutcome,
   type Edit,
   type Inference,
+  type TaskContext,
 } from '@app/agent';
-import { fail, ok, type Result, type TaskEvent } from '@app/shared';
+import {
+  fail,
+  isFinalStatus,
+  ok,
+  type FinalStatus,
+  type IterationAnswer,
+  type Result,
+  type TaskEvent,
+} from '@app/shared';
 import {
   CONTAINER_WORKDIR,
   scanInstallScripts,
@@ -40,6 +51,7 @@ import {
   removeScratch,
 } from './depsCache.ts';
 import type { HubSync } from './hubSync.ts';
+import { fixtureInference } from './fixture.ts';
 import { buildPrBody } from './prBody.ts';
 import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
@@ -88,23 +100,107 @@ export type PipelineDeps = {
   // The task's page in the hub, linked from the pull request for what its
   // body leaves out.
   receiptUrl?: (taskId: string) => string;
+  // GITHUB_REPO as `owner/name`, when set: the Agent tab links to `.hub/`
+  // at the task's base commit there.
+  githubRepo?: string;
+  // How long the reply draft may take before the template stands in.
+  draftTimeoutMs?: number;
 };
 
 const MAX_REFUSALS = 3;
+// With the host it tried, when the error names one, so the blocked request
+// says where it was going.
 const NETWORK_ATTEMPT =
-  /ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED/;
+  /(?:ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED)(?: [\w.-]+(?::\d+)?)?/;
 const tail = (s: string, n = 8000) => (s.length > n ? `…${s.slice(-n)}` : s);
+const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+// Caps on what the Agent tab gets: each prompt section, and per iteration
+// the model's reasoning and why an answer was rejected.
+const MAX_PROMPT_SECTION_CHARS = 4000;
+const MAX_REASONING_CHARS = 2000;
+const MAX_REJECTION_CHARS = 1000;
+// The loop's own note for an answer it didn't take (fixLoop.ts).
+const REJECTION_NOTE =
+  /^Iteration \d+: (?:answer rejected|patch refused) \((.*)\)$/s;
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
     const ws = await createWorkspace(deps.tasksDir, task.id);
+    // What the reply draft needs, picked off the stream as it passes.
+    const seen = {
+      status: null as string | null,
+      decisions: [] as { id: string; title: string }[],
+      diff: '',
+    };
+    const watched: TaskHandle = {
+      ...task,
+      emit: (e) => {
+        if (e.type === 'status') seen.status = e.status;
+        if (e.type === 'context') seen.decisions = e.decisions;
+        task.emit(e);
+      },
+      setDiff: (d) => {
+        seen.diff = d;
+        task.setDiff(d);
+      },
+    };
+    // A fault ends the task as an error here, so it gets its reply draft
+    // too; rethrown after it for the queue to log (queue.ts).
+    let crash: { err: unknown } | null = null;
     try {
-      await runTask(deps, task, ws);
+      await runTask(deps, watched, ws);
+    } catch (err) {
+      crash = { err };
+      if (!isFinalStatus(seen.status))
+        watched.emit({
+          type: 'status',
+          status: 'error',
+          reason: 'internal error',
+        });
     } finally {
       if (!deps.keepWorkspaces) await removeWorkspace(ws);
     }
+    if (isFinalStatus(seen.status))
+      await emitReplyDraft(deps, task, {
+        status: seen.status,
+        decisions: seen.decisions,
+        files: [...seen.diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map(
+          (m) => m[1]!
+        ),
+        ...(task.fixtureOf ? { fixture: true } : {}),
+      });
+    if (crash) throw crash.err;
   },
 });
+
+// The reply the support rep can send, drafted once the status is final: one
+// more model call for the outcomes a model may describe, the template for
+// the rest and for any draft that fails its rules. It never changes the
+// status. Fixture runs pass `fixture: true` to get the template.
+const emitReplyDraft = async (
+  deps: PipelineDeps,
+  { input, emit }: TaskHandle,
+  facts: {
+    status: FinalStatus;
+    decisions: { id: string; title: string }[];
+    files: string[];
+    fixture?: boolean;
+  }
+) => {
+  const { draft, fallback } = await draftReply(
+    deps.inference,
+    {
+      ...facts,
+      title: input.title,
+      report: input.text,
+      ...(input.incidentId ? { incidentId: input.incidentId } : {}),
+    },
+    deps.draftTimeoutMs === undefined ? {} : { timeoutMs: deps.draftTimeoutMs }
+  );
+  if (fallback)
+    emit({ type: 'log', message: `Reply draft: the template (${fallback})` });
+  emit({ type: 'reply_draft', ...draft });
+};
 
 const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const { id, input, setDiff } = task;
@@ -117,6 +213,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   };
   const reasoning: string[] = [];
   const text = `${input.title}\n${input.text}`;
+  // A fixture run is driven by the scripted hostile proposal, not the model;
+  // everything else below is the same pipeline.
+  const inference = task.fixtureOf ? fixtureInference() : deps.inference;
 
   const run = async (
     cmd: string[],
@@ -319,11 +418,17 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   emit({ type: 'phase', phase: 'fix' });
   let refusals = 0;
   const touched = new Set<string>();
+  // Recorded for the Agent tab, never read back by the loop: the prompt of
+  // the first call, and what the model answered in the iteration under way,
+  // which goes out with that iteration's check.
+  let promptRecorded = false;
+  let answer: IterationAnswer = {};
   const checkRoleScope = (edits: Edit[]): Result<null> => {
     const verdict = checkPolicy(policy, edits);
     if (verdict.ok) return ok(null);
     for (const r of verdict.refusals)
       emit({ type: 'policy_refused', path: r.path, rule: r.rule });
+    answer.refused = [...(answer.refused ?? []), ...verdict.refusals];
     refusals += verdict.refusals.length;
     return fail(
       'forbidden',
@@ -367,24 +472,41 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
         const content = await readInside(ws.repo, path);
         if (content !== null) files.push({ path, content });
       }
-      const reply = await deps.inference.complete(
-        buildTaskMessages({
-          policy,
-          rolePrompt: role.prompt,
-          task: input,
-          decisions,
-          files,
-          errors: touched.size ? latest.errors : '',
-          ...(lastRejection ? { lastRejection } : {}),
-          ...(step ? { step, existingTests } : {}),
-          ...(reproduction ? { reproduction } : {}),
-        })
-      );
+      const ctx: TaskContext = {
+        policy,
+        rolePrompt: role.prompt,
+        task: input,
+        decisions,
+        files,
+        errors: touched.size ? latest.errors : '',
+        ...(lastRejection ? { lastRejection } : {}),
+        ...(step ? { step, existingTests } : {}),
+        ...(reproduction ? { reproduction } : {}),
+      };
+      if (!promptRecorded) {
+        promptRecorded = true;
+        emit({
+          type: 'prompt',
+          sections: promptSections(ctx, MAX_PROMPT_SECTION_CHARS),
+          repo: deps.githubRepo ?? null,
+        });
+      }
+      const reply = await inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
-      const answer = parseEditsResponse(reply.value);
-      if (answer.success && answer.value.reasoning)
-        reasoning.push(answer.value.reasoning);
-      return answer;
+      const parsed = parseEditsResponse(reply.value);
+      if (parsed.success && parsed.value.reasoning)
+        reasoning.push(parsed.value.reasoning);
+      if (parsed.success)
+        answer = {
+          ...(parsed.value.reasoning
+            ? { reasoning: head(parsed.value.reasoning, MAX_REASONING_CHARS) }
+            : {}),
+          proposed: parsed.value.edits.map((e) => ({
+            path: e.path,
+            create: isCreate(e),
+          })),
+        };
+      return parsed;
     },
     // The loop runs this on every answer, before a bug's step rule; apply
     // runs it again before writing. An answer that passed once passes again,
@@ -402,18 +524,32 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       });
       return ok(null);
     },
-    onIteration: (n, c) =>
+    onIteration: (n, c) => {
       emit({
         type: 'iteration',
         n,
         typeErrors: c.typeErrors,
         testsFailed: c.testsFailed,
-      }),
-    onNote: (message) => emit({ type: 'log', message }),
+        ...answer,
+      });
+      answer = {};
+    },
+    onNote: (message) => {
+      const rejected = REJECTION_NOTE.exec(message);
+      if (rejected?.[1])
+        answer.rejected = head(rejected[1], MAX_REJECTION_CHARS);
+      emit({ type: 'log', message });
+    },
   });
 
   const diff = await diffPaths(ws, [...touched]);
   setDiff(diff);
+  // A fixture run never publishes, whatever its checks say: it ends flagged,
+  // with what the layers stopped.
+  if (task.fixtureOf) {
+    emit({ type: 'status', status: 'flagged', reason: fixtureReason(events) });
+    return;
+  }
   // A flagged report always ends flagged: green checks never publish it
   // (a model that refused the report's instructions still produced
   // a change nobody asked for in good faith), and a loop that gave up ends
@@ -507,6 +643,13 @@ const publish = async (
     status: 'pr_opened',
     reason: `Pull request #${published.value.number} is open for a developer`,
   });
+};
+
+// What a fixture run's layers stopped, in one line.
+const fixtureReason = (events: TaskEvent[]) => {
+  const refused = events.filter((e) => e.type === 'policy_refused').length;
+  const blocked = events.filter((e) => e.type === 'blocked').length;
+  return `Fixture run: ${refused} edit${refused === 1 ? '' : 's'} refused, ${blocked} request${blocked === 1 ? '' : 's'} blocked. Nothing is published.`;
 };
 
 const readInside = async (root: string, path: string) => {

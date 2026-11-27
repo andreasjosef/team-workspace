@@ -312,12 +312,11 @@ table.iters th {
 .outcome-blue {
   border-left-color: var(--blue);
 }
-.outcome-link:hover {
-  background: var(--bg-soft);
-  color: var(--text);
-}
-.outcome-link > span {
-  display: block;
+.outcome-pr {
+  display: inline-block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0 0 0.6rem;
 }
 .outcome-headline {
   font-size: 1.25rem;
@@ -505,4 +504,82 @@ table.iters th {
 }
 .receipt-body .log {
   max-height: 22rem;
+}
+
+/* The Agent tab: the prompt in collapsible sections, then each iteration.
+   The model's words carry their own edge and label, never the hub's look. */
+.agent-heading {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.9em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.prompt-section summary {
+  cursor: pointer;
+}
+.prompt-section pre {
+  margin: 0.3rem 0 0.6rem;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}
+.agent-iterations {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.agent-iteration {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--bg-soft);
+}
+.agent-iteration-head {
+  font-weight: 700;
+}
+.model-says {
+  margin: 0.3rem 0;
+  padding: 0.2rem 0 0.2rem 0.8rem;
+  border-left: 2px solid var(--purple);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+.model-says .untrusted-label {
+  display: block;
+  font-style: normal;
+}
+
+/* The reply drafted for the customer: plain text the rep edits and copies. */
+.reply-draft {
+  margin: 1rem 0;
+}
+.reply-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.reply-draft-head h2 {
+  margin: 0 0 0.4rem;
+}
+.reply-draft-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-mid);
+  border: 1px solid var(--bg-soft);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+  resize: vertical;
+}
+.reply-draft .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.5rem 0 0;
 }

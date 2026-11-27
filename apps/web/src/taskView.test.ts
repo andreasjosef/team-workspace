@@ -1,9 +1,13 @@
 import type { TaskSnapshot } from '@app/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  fixtureLayers,
+  NETWORK_LAYER,
   outcome,
   progress,
+  replyDraftLabel,
   reproduced,
+  taskLayers,
   taskForIncident,
   timeAgo,
 } from './taskView.ts';
@@ -26,6 +30,10 @@ const task = (patch: Partial<TaskSnapshot>): TaskSnapshot => ({
   previewUrl: null,
   hasDiff: true,
   pr: { url: 'https://github.invalid/pull/7', number: 7, draft: false },
+  prompt: null,
+  replyDraft: null,
+  fixtureOf: null,
+  fixtureRun: null,
   ...patch,
 });
 
@@ -62,6 +70,13 @@ describe('plain words for the support rep', () => {
     ).toMatch(/fix/);
   });
 
+  it('labels who drafted the reply', () => {
+    expect(replyDraftLabel({ source: 'model' })).toBe('Drafted by the model');
+    expect(replyDraftLabel({ source: 'template' })).toBe(
+      'Drafted from a template'
+    );
+  });
+
   it('tells the customer nothing about a flagged report', () => {
     const o = outcome(task({ status: 'flagged' }));
     expect(o.tone).toBe('red');
@@ -86,6 +101,77 @@ describe('plain words for the support rep', () => {
     expect(
       states(task({ status: 'error', pr: null, iterations: iters(0, 1, 0) }))
     ).toEqual(['done', 'done', 'stopped', 'todo']);
+  });
+});
+
+describe('fixture run', () => {
+  const flagged = task({
+    status: 'flagged',
+    pr: null,
+    inputSignals: ['tries to override instructions'],
+    fixtureRun: 'f1',
+  });
+  const fixture = (patch: Partial<TaskSnapshot>) =>
+    task({ id: 'f1', status: 'flagged', pr: null, fixtureOf: 'x', ...patch });
+  const states = (f: TaskSnapshot | null) =>
+    fixtureLayers(flagged, f).map((l) => [l.name, l.state]);
+
+  it('shows each layer that fired: refused, refused, blocked', () => {
+    const layers = fixtureLayers(
+      flagged,
+      fixture({
+        refusals: [
+          { path: 'src/auth/users.ts', rule: 'deny src/auth/**' },
+          {
+            path: '.hub/roles/cs.json',
+            rule: 'role policies are never agent-writable',
+          },
+        ],
+        blocked: ['network: test run: EAI_AGAIN collector.attacker.example'],
+      })
+    );
+    expect(layers.map((l) => [l.name, l.state])).toEqual([
+      ['Input scanner', 'flagged'],
+      ['Role policy', 'refused'],
+      ['.hub/ lock', 'refused'],
+      [NETWORK_LAYER, 'blocked'],
+    ]);
+    expect(layers[1]!.detail).toMatch(/^src\/auth\/users\.ts/);
+    expect(layers[3]!.detail).toMatch(/collector\.attacker\.example/);
+  });
+
+  it('says not reached once it ended, waiting while it runs', () => {
+    expect(states(fixture({}))).toEqual([
+      ['Input scanner', 'flagged'],
+      ['Role policy', 'not reached'],
+      ['.hub/ lock', 'not reached'],
+      [NETWORK_LAYER, 'not reached'],
+    ]);
+    expect(states(fixture({ status: 'working' })).at(-1)).toEqual([
+      NETWORK_LAYER,
+      'waiting',
+    ]);
+    expect(states(null).at(1)).toEqual(['Role policy', 'waiting']);
+  });
+
+  it('labels a fixture run as scripted, not the model', () => {
+    const o = outcome(fixture({}));
+    expect(o.headline).toBe(
+      'Fixture: a scripted hostile proposal, not the model'
+    );
+    expect(o.customer).toBeNull();
+  });
+
+  it("reads a task's own layers: what fired, what didn't", () => {
+    const t = task({
+      refusals: [{ path: 'src/auth/users.ts', rule: 'deny src/auth/**' }],
+    });
+    expect(taskLayers(t).map((l) => [l.name, l.state])).toEqual([
+      ['Input scanner', 'not fired'],
+      ['Role policy', 'refused'],
+      ['.hub/ lock', 'not fired'],
+      [NETWORK_LAYER, 'not fired'],
+    ]);
   });
 });
 

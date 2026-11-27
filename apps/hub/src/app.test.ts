@@ -50,6 +50,20 @@ const settle = async (app: App, id: string, until: TaskStatus[]) => {
   return snap!;
 };
 
+// The reply draft arrives after the final status.
+const settleDraft = async (app: App, id: string) => {
+  let snap: TaskSnapshot | undefined;
+  await vi.waitFor(async () => {
+    snap = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${id}` })
+    ).json();
+    expect(snap!.replyDraft).not.toBeNull();
+  });
+  return snap!;
+};
+const startFixture = (app: App, id: string) =>
+  app.inject({ method: 'POST', url: `/api/tasks/${id}/fixture` });
+
 // In-hub approval is gone: a developer merges the pull request on GitHub.
 const decide = (app: App, id: string, action: 'approve' | 'reject') =>
   app.inject({
@@ -113,6 +127,15 @@ describe('tasks', () => {
       url: `/api/tasks/${taskId}/diff`,
     });
     expect(diff.body).toContain('toUpperCase()');
+    // The mock's canned reply draft follows the final status.
+    const drafted = await settleDraft(app, taskId);
+    expect(drafted.status).toBe('pr_opened');
+    expect(drafted.replyDraft).toMatchObject({
+      source: 'model',
+      text: expect.stringContaining(
+        "a fix is waiting for a developer's review"
+      ),
+    });
 
     // No route in the hub approves, rejects or merges anything.
     expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
@@ -158,8 +181,71 @@ describe('tasks', () => {
     );
     // Nothing published, and nothing in the hub to approve or reject it.
     expect(flagged.pr).toBeNull();
+    // The hostile text never shapes the reply: the flagged template.
+    expect((await settleDraft(app, taskId)).replyDraft).toMatchObject({
+      source: 'template',
+    });
     expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
     expect((await decide(app, taskId, 'reject')).statusCode).toBe(404);
+  });
+
+  it('fixture run: starts for a flagged task, linked both ways, refused twice and blocked, never published', async () => {
+    const app = await setup();
+    const { taskId } = (await create(app, hostileTicket)).json();
+    await settle(app, taskId, ['flagged']);
+
+    const started = await startFixture(app, taskId);
+    expect(started.statusCode).toBe(201);
+    const fixtureId = started.json().taskId;
+    const fixture = await settle(app, fixtureId, ['flagged']);
+    expect(fixture).toMatchObject({
+      fixtureOf: taskId,
+      fixtureRun: null,
+      input: {
+        role: 'cs',
+        title: 'Fixture: a scripted hostile proposal, not the model',
+      },
+      pr: null,
+    });
+    expect(fixture.input.incidentId).toBeUndefined();
+    expect(fixture.refusals).toEqual([
+      { path: 'src/auth/users.ts', rule: 'deny src/auth/**' },
+      {
+        path: '.hub/roles/cs.json',
+        rule: 'role policies are never agent-writable',
+      },
+    ]);
+    expect(fixture.blocked).toEqual([
+      'network: test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+    ]);
+    const flagged = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })
+    ).json<TaskSnapshot>();
+    expect(flagged).toMatchObject({ fixtureRun: fixtureId, fixtureOf: null });
+
+    // Asking again answers with the same run; a fixture run can't start one.
+    const again = await startFixture(app, taskId);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().taskId).toBe(fixtureId);
+    expect((await startFixture(app, fixtureId)).statusCode).toBe(403);
+  });
+
+  it('fixture run: refused for a task that is not flagged, not found for an unknown one', async () => {
+    const app = await setup();
+    const { taskId } = (await create(app, discountTicket)).json();
+    await settle(app, taskId, ['pr_opened']);
+    const refused = await startFixture(app, taskId);
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ code: 'forbidden' });
+    const snap = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })
+    ).json<TaskSnapshot>();
+    expect(snap.fixtureRun).toBeNull();
+    expect(
+      (await startFixture(app, '00000000-0000-4000-8000-000000000000'))
+        .statusCode
+    ).toBe(404);
+    expect((await startFixture(app, 'not-a-uuid')).statusCode).toBe(404);
   });
 
   it("PO asking for the checkout fix: the PO's scope refuses every edit", async () => {
@@ -214,7 +300,7 @@ describe('tasks', () => {
                 events.push(
                   e.type === 'status' ? `status:${e.status}` : e.type
                 );
-                if (e.type === 'status' && e.status === 'pr_opened') {
+                if (e.type === 'reply_draft') {
                   ws.terminate();
                   done();
                 }
@@ -225,8 +311,9 @@ describe('tasks', () => {
     });
     expect(events[0]).toBe('status:working');
     expect(events).toContain('context');
-    // The pull request comes before the status that says it's open.
-    expect(events.slice(-2)).toEqual(['pr', 'status:pr_opened']);
+    // The pull request comes before the status that says it's open; the
+    // reply draft comes after it.
+    expect(events.slice(-3)).toEqual(['pr', 'status:pr_opened', 'reply_draft']);
   });
 
   it('reports a crashed runner as an error', async () => {

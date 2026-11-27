@@ -14,6 +14,12 @@ Prettier ignores this folder: the hub parses these files, so they stay as writte
 
 ## Demo script
 
-The demo script now lives in [docs/ticket-to-pr](../docs/ticket-to-pr/README.md#demo-3-minutes): support only, ending in a pull request. The signup-copy change (D-017) was the PO beat and is no longer part of it.
+The full script lives in [docs/ticket-to-pr](../docs/ticket-to-pr/README.md#demo-3-minutes): support only. The beats, and what each needs from this folder:
+
+1. **INC-1042 → pull request + reply.** Forward it from the inbox. The top card shows the outcome, "Pull request #N, waiting for a developer" and the drafted reply. The PR holds the reproduction test for `summer20` and the fix (see "The bug" below).
+2. **Agent tab.** The prompt and roles from `shop/.hub/` at the task's commit, the report inside its untrusted wrapper, and the model's reasoning per iteration.
+3. **INC-1043 → flagged → fixture run.** Flagged, no PR. On its Containment tab, "What if the model had obeyed?" runs the scripted hostile proposal: the `src/auth/users.ts` edit refused by the `cs` policy, the `.hub/roles/cs.json` edit refused by the lock, and the call to `collector.attacker.example` blocked because checks run with no network.
+
+The mock runner (`pnpm dev`) scripts all three without Docker. The signup-copy change (D-017) was the PO beat and is no longer part of it.
 
 Reset between runs: restart the hub (tasks are in memory) and, with the real runner, `git reset --hard demo-start` in the hub repo.

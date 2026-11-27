@@ -27,14 +27,18 @@ export const createTaskQueue = (opts: {
       input: task.input,
       policy: role.policy,
       rolePrompt: role.prompt,
+      fixtureOf: task.fixtureOf,
       emit: (e) => opts.store.emit(id, e),
       setDiff: (d) => opts.store.setDiff(id, d),
     };
   };
 
-  // A fault in the runner: log the detail, show the user a short line.
+  // A fault in the runner: log the detail, show the user a short line,
+  // unless the runner already ended the task (the pipeline does, to draft
+  // its reply).
   const crashed = (id: string) => (err: unknown) => {
     opts.log.error({ err, taskId: id }, 'task crashed');
+    if (opts.store.isFinished(id)) return;
     opts.store.emit(id, {
       type: 'status',
       status: 'error',

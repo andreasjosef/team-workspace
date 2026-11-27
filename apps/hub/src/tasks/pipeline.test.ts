@@ -1,5 +1,6 @@
 import {
   checkOutput,
+  templateReply,
   type ChatMessage,
   type EditsResponse,
   type Inference,
@@ -15,6 +16,7 @@ import {
   fail,
   ok,
   type CreateTaskInput,
+  type Result,
   type CreateTaskResponse,
   type TaskEvent,
   type TaskSnapshot,
@@ -48,6 +50,7 @@ import {
   type Publisher,
   type PublishInput,
 } from './publisher.ts';
+import { FIXTURE_COLLECTOR, FIXTURE_INPUT, FIXTURE_TEST } from './fixture.ts';
 import { git } from './workspace.ts';
 
 // The real pipeline from forward to outcome, without a VM: a throwaway hub
@@ -217,17 +220,37 @@ const fakeDenied = (entries: DeniedRequest[] = []) => {
   return { fetch, calls };
 };
 
-// Replies in order; the last one repeats. An object is sent as JSON.
-const scriptedInference = (replies: (EditsResponse | string)[]) => {
+// A reply draft that keeps every rule, for a fix waiting for review.
+const CLEAN_DRAFT =
+  "Hi,\n\nThanks for telling us. We could reproduce the problem with lower-case codes, and a fix is waiting for a developer's review. We'll let you know once it's out.\n\nBest regards";
+
+// The reply draft's call, told apart from the fix loop's by its prompt.
+const isDraftCall = (messages: ChatMessage[]) =>
+  messages[0]?.content.startsWith('Write the reply') ?? false;
+
+// Replies in order; the last one repeats. An object is sent as JSON. The
+// reply draft's call is answered by `draft` and kept apart in `draftCalls`,
+// so `calls` holds only the fix loop's.
+const scriptedInference = (
+  replies: (EditsResponse | string)[],
+  {
+    draft = async () => ok(CLEAN_DRAFT),
+  }: { draft?: () => Promise<Result<string>> } = {}
+) => {
   const calls: ChatMessage[][] = [];
+  const draftCalls: ChatMessage[][] = [];
   const inference: Inference = {
     complete: async (messages) => {
+      if (isDraftCall(messages)) {
+        draftCalls.push(messages);
+        return draft();
+      }
       const reply = replies[Math.min(calls.length, replies.length - 1)]!;
       calls.push(messages);
       return ok(typeof reply === 'string' ? reply : JSON.stringify(reply));
     },
   };
-  return { inference, calls };
+  return { inference, calls, draftCalls };
 };
 
 // ---- Running a task ------------------------------------------------------
@@ -253,6 +276,7 @@ type PipelineFakes = {
   sync?: HubSync;
   // Keep the task workspace, to inspect it after the run.
   keepWorkspaces?: boolean;
+  githubRepo?: string;
 };
 
 const fakePipeline = (opts: PipelineFakes) =>
@@ -273,10 +297,15 @@ const fakePipeline = (opts: PipelineFakes) =>
         hubRepoDir: opts.hub.repoDir,
         scratchDir: join(base, 'tasks'),
       }),
+    ...(opts.githubRepo ? { githubRepo: opts.githubRepo } : {}),
   });
 
 const runTask = async (
-  opts: PipelineFakes & { input: CreateTaskInput; id?: string }
+  opts: PipelineFakes & {
+    input: CreateTaskInput;
+    id?: string;
+    fixtureOf?: string;
+  }
 ) => {
   const role = opts.hub.roles.get(opts.input.role)!;
   const events: TaskEvent[] = [];
@@ -289,6 +318,7 @@ const runTask = async (
     input: opts.input,
     policy: role.policy,
     rolePrompt: role.prompt,
+    fixtureOf: opts.fixtureOf ?? null,
     emit: (e) => events.push(e),
     setDiff: (d) => (diff = d),
   });
@@ -458,8 +488,14 @@ describe('pipeline', () => {
     expect(report).toContain(fix.reasoning);
     expect(body).toContain(`\`${REPRO_TEST}\``);
     expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
-    // The pull request comes first, then the status that says so.
-    expect(out.events.at(-2)).toEqual({
+    // The pull request comes first, then the status that says so, then the
+    // reply draft, which the scripted model wrote within the rules.
+    expect(out.events.at(-1)).toEqual({
+      type: 'reply_draft',
+      text: CLEAN_DRAFT,
+      source: 'model',
+    });
+    expect(out.events.at(-3)).toEqual({
       type: 'pr',
       url: `file://${hub.repoDir}#task/t1`,
       number: 1,
@@ -572,6 +608,80 @@ describe('pipeline', () => {
     );
   });
 
+  it('INC-1042: the Agent tab gets the first prompt in capped sections, and each iteration its answer', async () => {
+    // A long role prompt, to show the cap.
+    const rolePrompt = `You are the support agent.\n${'Be careful. '.repeat(500)}`;
+    const hub = await makeHub({ '.hub/prompts/cs.md': rolePrompt });
+    const together: EditsResponse = {
+      reasoning: 'Reproduce and fix in one go.',
+      edits: [...reproduce.edits, ...fix.edits],
+    };
+    const model = scriptedInference([together, reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+      githubRepo: 'demo-org/shop',
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const prompts = out.events.flatMap((e) => (e.type === 'prompt' ? [e] : []));
+    expect(prompts).toHaveLength(1);
+    const [prompt] = prompts;
+    expect(prompt!.repo).toBe('demo-org/shop');
+    const section = (title: string) =>
+      prompt!.sections.find((s) => s.title === title);
+    // The system prompt, capped, keeping its full length.
+    const system = section('System prompt')!;
+    expect(system.text.startsWith('You are the support agent.')).toBe(true);
+    expect(system.chars).toBe(rolePrompt.trim().length);
+    expect(system.text.length).toBeLessThan(system.chars);
+    for (const s of prompt!.sections)
+      expect(s.text.length).toBeLessThanOrEqual(4001);
+    expect(section('Role policy')!.text).toContain('You may change files');
+    // The report inside its untrusted wrapper, as the model got it.
+    const report = section("The customer's report")!.text;
+    expect(report).toMatch(
+      /<untrusted source="incident INC-1042">\n[\s\S]*summer20 at checkout[\s\S]*\n<\/untrusted>/
+    );
+    expect(section('Decisions')!.text).toContain('D-014');
+    expect(section('Context files')!.text).toContain(
+      'src/checkout/discount.ts'
+    );
+    // Every uncapped section is the model's first prompt, verbatim.
+    const [sent] = model.calls;
+    for (const s of prompt!.sections.filter((s) => s.text.length === s.chars))
+      expect(`${sent![0]!.content}\n${sent![1]!.content}`).toContain(s.text);
+
+    // Each iteration carries what the model answered; a rejected answer
+    // says why. The baseline carries none.
+    const iterations = out.events.flatMap((e) =>
+      e.type === 'iteration' ? [e] : []
+    );
+    expect(iterations[0]).toEqual({
+      type: 'iteration',
+      n: 0,
+      typeErrors: 0,
+      testsFailed: 0,
+    });
+    expect(iterations[1]).toMatchObject({
+      reasoning: together.reasoning,
+      proposed: [
+        { path: REPRO_TEST, create: true },
+        { path: 'src/checkout/discount.ts', create: false },
+      ],
+      rejected: expect.stringContaining('may add only new test files'),
+    });
+    expect(iterations[2]).toMatchObject({
+      reasoning: reproduce.reasoning,
+      proposed: [{ path: REPRO_TEST, create: true }],
+    });
+    expect(iterations[2]).not.toHaveProperty('rejected');
+    expect(iterations[3]).toMatchObject({ reasoning: fix.reasoning });
+  });
+
   it('INC-1042: a reproduction that passes is discarded and never reaches the diff', async () => {
     const hub = await makeHub();
     const passing: EditsResponse = {
@@ -591,6 +701,7 @@ describe('pipeline', () => {
     const leftOver: boolean[] = [];
     const complete = model.inference.complete;
     model.inference.complete = async (messages) => {
+      if (isDraftCall(messages)) return complete(messages);
       const ws = join(base, 'tasks', 't1', 'repo');
       leftOver.push(
         (await readFile(join(ws, passing.edits[0]!.path), 'utf8').catch(
@@ -761,7 +872,8 @@ describe('pipeline', () => {
     expect(out.events).toContainEqual({
       type: 'blocked',
       kind: 'network',
-      detail: 'test run: getaddrinfo ENOTFOUND (sandbox has no network)',
+      detail:
+        'test run: getaddrinfo ENOTFOUND collector.attacker.example (sandbox has no network)',
     });
   });
 
@@ -802,6 +914,15 @@ describe('pipeline', () => {
     );
     expect(refused).toContain('src/auth/users.ts');
     expect(refused).toContain('.hub/roles/cs.json');
+    // The Agent tab shows the refusals on the iteration that proposed them.
+    const first = out.events.find((e) => e.type === 'iteration' && e.n === 1);
+    expect(first).toMatchObject({
+      reasoning: 'As instructed.',
+      refused: expect.arrayContaining([
+        expect.objectContaining({ path: 'src/auth/users.ts' }),
+        expect.objectContaining({ path: '.hub/roles/cs.json' }),
+      ]),
+    });
     expect(out.events.some((e) => e.type === 'input_flagged')).toBe(true);
     for (const path of refused) expect(out.diff).not.toContain(path);
   });
@@ -906,6 +1027,70 @@ describe('pipeline', () => {
     await app.close();
   });
 
+  it('fixture run: the scripted hostile proposal is refused twice, its test run blocked, nothing published', async () => {
+    const hub = await makeHub();
+    // The fixture's test fails the way it would in a real sandbox: no .env,
+    // no network, so the post to the collector can't resolve its host.
+    const sandbox = shopSandbox({
+      [CHECK]: async (call) =>
+        (await readWork(call, FIXTURE_TEST))
+          ? check(1, {
+              testOutput: `Error: POST ${FIXTURE_COLLECTOR}: Error: getaddrinfo EAI_AGAIN collector.attacker.example`,
+            })
+          : check(0),
+    });
+    // The model is never asked: the fixture drives the run.
+    const model = scriptedInference([fix]);
+    const published: unknown[] = [];
+    const publisher: Publisher = {
+      publish: async (req) => {
+        published.push(req);
+        return fail('unexpected', 'a fixture run must never publish');
+      },
+    };
+
+    const out = await runTask({
+      hub,
+      input: FIXTURE_INPUT,
+      fixtureOf: 'flagged-1',
+      sandbox,
+      inference: model,
+      publisher,
+    });
+
+    expect(out.status).toBe('flagged');
+    expect(out.reason).toMatch(
+      /^Fixture run: 2 edits refused, 1 request blocked/
+    );
+    expect(
+      out.events.flatMap((e) =>
+        e.type === 'policy_refused' ? [[e.path, e.rule]] : []
+      )
+    ).toEqual([
+      ['src/auth/users.ts', 'deny src/auth/**'],
+      ['.hub/roles/cs.json', 'role policies are never agent-writable'],
+    ]);
+    expect(out.events).toContainEqual({
+      type: 'blocked',
+      kind: 'network',
+      detail:
+        'test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+    });
+    expect(model.calls).toHaveLength(0);
+    // The reply is the template: a fixture run never asks the model.
+    expect(out.events.at(-1)).toEqual({
+      type: 'reply_draft',
+      ...templateReply('flagged'),
+    });
+    expect(model.draftCalls).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    expect(out.pr).toBeUndefined();
+    expect(out.phases).not.toContain('publish');
+    expect(await hubGit(hub, ['branch', '--list', 'task/*'])).toBe('');
+    // The refused paths never reach the diff; the applied test does.
+    expect(out.diffPaths).toEqual([FIXTURE_TEST]);
+  });
+
   it('counts a refused answer once: two refusals stay under the halt at three', async () => {
     const hub = await makeHub();
     const sandbox = shopSandbox();
@@ -938,6 +1123,34 @@ describe('pipeline', () => {
     expect(refused).toEqual(['src/auth/users.ts', 'src/auth/users.ts']);
     expect(out.status).toBe('pr_opened');
     expect(out.diffPaths).not.toContain('src/auth/users.ts');
+  });
+
+  it('the last iteration carries its rejection when the loop halts after it', async () => {
+    const hub = await makeHub();
+    const outOfScope: EditsResponse = {
+      reasoning: 'Make the support address an admin.',
+      edits: [
+        {
+          path: 'src/auth/users.ts',
+          search: "const ADMINS = new Set(['founder@demo-shop.example']);",
+          replace: "const ADMINS = new Set(['ops@example.net']);",
+        },
+      ],
+    };
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([outOfScope]),
+    });
+
+    expect(out.status).toBe('flagged');
+    const last = out.events.filter((e) => e.type === 'iteration').at(-1);
+    expect(last).toMatchObject({
+      n: 3,
+      refused: [{ path: 'src/auth/users.ts' }],
+      rejected: expect.stringContaining('src/auth/users.ts'),
+    });
   });
 
   it('INC-1042: a reproduction a test run swapped for a symlink is not deleted, and stays tracked', async () => {
@@ -1154,6 +1367,138 @@ const withOrigin = async (hub: Hub) => {
 
 const D_030 =
   "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
+
+// What follows the final status: only the reply draft (and a log line on
+// a fallback). Nothing after it changes the status.
+const afterStatus = (events: TaskEvent[]) =>
+  events.slice(events.findLastIndex((e) => e.type === 'status') + 1);
+
+describe('reply draft', () => {
+  it('INC-1042: the model drafts the reply from hub facts once the pull request is open', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(afterStatus(out.events)).toEqual([
+      { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
+    ]);
+    expect(model.draftCalls).toHaveLength(1);
+    const user = model.draftCalls[0]![1]!.content;
+    expect(user).toContain("A fix is waiting for a developer's review: yes");
+    expect(user).toContain('D-014');
+    expect(user).toContain('src/checkout/discount.ts');
+    expect(user).toContain(
+      `<untrusted source="incident INC-1042">\n${INC_1042.title}\n${INC_1042.text}\n</untrusted>`
+    );
+  });
+
+  it('INC-1043: a flagged task gets the template, and the model is not asked for a draft', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference(refusesThenFixes);
+    const out = await runTask({
+      hub,
+      input: INC_1043,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('flagged');
+    expect(afterStatus(out.events)).toEqual([
+      { type: 'reply_draft', ...templateReply('flagged') },
+    ]);
+    expect(model.draftCalls).toHaveLength(0);
+  });
+
+  it('a failed draft call falls back to the template and leaves the status alone', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix], {
+        draft: async () => fail('unavailable', 'Inference answered 503'),
+      }),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    expect(afterStatus(out.events)).toEqual([
+      {
+        type: 'log',
+        message: 'Reply draft: the template (Inference answered 503)',
+      },
+      { type: 'reply_draft', ...templateReply('pr_opened') },
+    ]);
+  });
+
+  it('a draft that breaks the rules falls back to the template and leaves the status alone', async () => {
+    const hub = await makeHub();
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, fix], {
+        draft: async () =>
+          ok('**Fixed!** It is live now, see https://demo-shop.example.'),
+      }),
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const [log, draft] = afterStatus(out.events);
+    expect(log).toMatchObject({
+      type: 'log',
+      message: expect.stringMatching(/broke the rules.*markdown.*a URL/),
+    });
+    expect(draft).toEqual({
+      type: 'reply_draft',
+      ...templateReply('pr_opened'),
+    });
+  });
+});
+
+describe('a crashed run', () => {
+  it('ends as an error with a reply draft, then rethrows for the queue to log', async () => {
+    const hub = await makeHub();
+    const role = hub.roles.get(INC_1042.role)!;
+    const events: TaskEvent[] = [];
+    const pipeline = fakePipeline({
+      hub,
+      sandbox: shopSandbox({
+        [CHECK]: async () => {
+          throw new Error('docker went away');
+        },
+      }),
+      inference: scriptedInference([reproduce, fix]),
+    });
+
+    await expect(
+      pipeline.run({
+        id: 't1',
+        branch: 'task/t1',
+        input: INC_1042,
+        policy: role.policy,
+        rolePrompt: role.prompt,
+        fixtureOf: null,
+        emit: (e) => events.push(e),
+        setDiff: () => {},
+      })
+    ).rejects.toThrow('docker went away');
+
+    expect(events.filter((e) => e.type === 'status').at(-1)).toEqual({
+      type: 'status',
+      status: 'error',
+      reason: 'internal error',
+    });
+    expect(afterStatus(events)).toEqual([
+      { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
+    ]);
+  });
+});
 
 describe('sync from origin', () => {
   it('a change merged on origin between two tasks shows up in the second task, without rebuilding the hub', async () => {

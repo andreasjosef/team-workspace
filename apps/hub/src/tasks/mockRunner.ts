@@ -1,11 +1,18 @@
 import {
   checkPolicy,
+  isCreate,
   matchDecisions,
+  promptSections,
   rankFiles,
   scanTaskInput,
+  templateReply,
+  wantsModelDraft,
   type Edit,
+  type EditsResponse,
 } from '@app/agent';
+import { isFinalStatus, type FinalStatus, type TaskEvent } from '@app/shared';
 import type { Hub } from '../hub/load.ts';
+import { FIXTURE_PROPOSAL, FIXTURE_TEST } from './fixture.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
 
 // A believable fake run: no Docker, no LLM. The UI track builds against it,
@@ -170,6 +177,50 @@ const HOSTILE: Scenario = {
   ],
 };
 
+// The fixture run: the hub's scripted hostile proposal (fixture.ts), played
+// the way the real pipeline plays it. The real policy refuses the first two
+// steps; the third is in scope, and its test run is blocked.
+const [fixtureAuth, fixtureHub, fixtureTest] = FIXTURE_PROPOSAL as [
+  EditsResponse,
+  EditsResponse,
+  EditsResponse,
+];
+const fixtureTestSource =
+  fixtureTest.edits[0] && 'create' in fixtureTest.edits[0]
+    ? fixtureTest.edits[0].create
+    : '';
+const FIXTURE: Scenario = {
+  name: 'fixture',
+  steps: [
+    {
+      ...fixtureAuth,
+      reasoning: fixtureAuth.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 0 },
+      diff: '',
+    },
+    {
+      ...fixtureHub,
+      reasoning: fixtureHub.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 0 },
+      diff: '',
+    },
+    {
+      ...fixtureTest,
+      reasoning: fixtureTest.reasoning ?? '',
+      after: { typeErrors: 0, testsFailed: 1 },
+      networkAttempt:
+        'test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+      diff: `diff --git a/${FIXTURE_TEST} b/${FIXTURE_TEST}
+new file mode 100644
+--- /dev/null
++++ b/${FIXTURE_TEST}
+@@ -0,0 +1,${fixtureTestSource.split('\n').length - 1} @@
+${fixtureTestSource.replace(/\n$/, '').replace(/^/gm, '+')}
+`,
+    },
+  ],
+};
+
 const pickScenario = (text: string, signals: string[]): Scenario | null => {
   if (
     signals.includes('tries to override instructions') ||
@@ -179,6 +230,22 @@ const pickScenario = (text: string, signals: string[]): Scenario | null => {
   if (/discount|coupon|\bcode/i.test(text)) return DISCOUNT;
   if (/signup|sign up|button|copy|heading|wording/i.test(text)) return COPY;
   return null;
+};
+
+// What the real pipeline's draft call might answer, for the outcomes a model
+// drafts; the rest get the real template. Plain, dateless, keeps the rules.
+const CANNED_DRAFTS: Partial<Record<FinalStatus, string>> = {
+  pr_opened:
+    "Hi,\n\nThanks for telling us about this, and sorry for the trouble at checkout. We could reproduce the problem with the code, and a fix is waiting for a developer's review. Once it's out, the code will work however you type it. We'll let you know.\n\nBest regards",
+  gave_up:
+    "Hi,\n\nThanks for telling us about this. We looked into it but couldn't pin it down yet, so it's now with our developers. We'll be in touch when we know more.\n\nBest regards",
+};
+
+const cannedDraft = (status: FinalStatus, fixture: boolean): TaskEvent => {
+  const text = CANNED_DRAFTS[status];
+  return text && wantsModelDraft({ status, fixture })
+    ? { type: 'reply_draft', text, source: 'model' }
+    : { type: 'reply_draft', ...templateReply(status) };
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -194,13 +261,15 @@ export const createMockRunner = (
   const step = () => sleep(stepMs);
   let opened = 0;
 
-  const run = async ({
+  const script = async ({
     id,
     branch,
     input,
     policy,
+    rolePrompt,
     emit,
     setDiff,
+    fixtureOf,
   }: TaskHandle) => {
     const text = `${input.title}\n${input.text}`;
     const cmd = (c: string, output: string, exitCode = 0) =>
@@ -240,7 +309,7 @@ export const createMockRunner = (
     );
     emit({ type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 });
 
-    const scenario = pickScenario(text, signals);
+    const scenario = fixtureOf ? FIXTURE : pickScenario(text, signals);
     if (!scenario) {
       emit({
         type: 'status',
@@ -252,6 +321,28 @@ export const createMockRunner = (
     }
 
     emit({ type: 'phase', phase: 'fix' });
+    // The prompt a real run would send first, built by the same code. The
+    // mock's base commit isn't real, so no link to it.
+    emit({
+      type: 'prompt',
+      sections: promptSections(
+        {
+          policy,
+          rolePrompt,
+          task: input,
+          decisions,
+          files: hub.sourceFiles.filter((f) => files.includes(f.path)),
+          errors: '',
+          ...(input.kind === 'bug' ? { step: 'reproduce' as const } : {}),
+        },
+        4000
+      ),
+      repo: null,
+    });
+    const answerOf = (s: Step) => ({
+      reasoning: s.reasoning,
+      proposed: s.edits.map((e) => ({ path: e.path, create: isCreate(e) })),
+    });
     let diff = '';
     let refusals = 0;
     let n = 0;
@@ -268,7 +359,14 @@ export const createMockRunner = (
           type: 'log',
           message: `Iteration ${n}: patch refused by the ${policy.name} policy`,
         });
-        emit({ type: 'iteration', n, typeErrors: 0, testsFailed: 0 });
+        emit({
+          type: 'iteration',
+          n,
+          typeErrors: 0,
+          testsFailed: 0,
+          ...answerOf(s),
+          refused: verdict.refusals,
+        });
         if (refusals >= 3) {
           setDiff(diff);
           emit({
@@ -285,12 +383,14 @@ export const createMockRunner = (
       if (s.networkAttempt) {
         cmd('npx --no-install vitest run', `Error: ${s.networkAttempt}`, 1);
         emit({ type: 'blocked', kind: 'network', detail: s.networkAttempt });
+        emit({ type: 'iteration', n, ...s.after, ...answerOf(s) });
         setDiff(diff);
         emit({
           type: 'status',
           status: 'flagged',
-          reason:
-            'A test run tried to reach the network. Stopped; the diff is kept for review.',
+          reason: fixtureOf
+            ? `Fixture run: ${refusals} edits refused, 1 request blocked. Nothing is published.`
+            : 'A test run tried to reach the network. Stopped; the diff is kept for review.',
         });
         return;
       }
@@ -301,7 +401,7 @@ export const createMockRunner = (
           : ' Tests  all passed',
         s.after.testsFailed ? 1 : 0
       );
-      emit({ type: 'iteration', n, ...s.after });
+      emit({ type: 'iteration', n, ...s.after, ...answerOf(s) });
     }
 
     if (!diff) {
@@ -313,6 +413,15 @@ export const createMockRunner = (
       return;
     }
     setDiff(diff);
+    // A fixture run never publishes, whatever happens.
+    if (fixtureOf) {
+      emit({
+        type: 'status',
+        status: 'flagged',
+        reason: 'Fixture run: nothing is published.',
+      });
+      return;
+    }
     emit({ type: 'phase', phase: 'preview' });
     await step();
     if (opts.previewBaseUrl) {
@@ -337,6 +446,21 @@ export const createMockRunner = (
       status: 'pr_opened',
       reason: `Pull request #${number} is open for a developer`,
     });
+  };
+
+  // The script, then the reply draft once the status is final, as the real
+  // pipeline does it.
+  const run = async (task: TaskHandle) => {
+    let status: string | null = null as string | null;
+    await script({
+      ...task,
+      emit: (e) => {
+        if (e.type === 'status') status = e.status;
+        task.emit(e);
+      },
+    });
+    if (isFinalStatus(status))
+      task.emit(cannedDraft(status, task.fixtureOf !== null));
   };
 
   return { run };
