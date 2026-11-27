@@ -59,6 +59,9 @@ export const api = {
   diff: (id: string) => call<string>(paths.diff(id), {}, null),
   createTask: (input: CreateTaskInput) =>
     call(paths.tasks, post(input), CreateTaskResponse),
+  // A fixture run for a flagged task. No body: the hub decides all of it.
+  startFixture: (id: string) =>
+    call(paths.fixture(id), { method: 'POST' }, CreateTaskResponse),
 };
 
 // Where a Result becomes a throw, for TanStack Query.

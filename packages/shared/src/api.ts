@@ -11,6 +11,7 @@ export const paths = {
   task: (id: string) => `/api/tasks/${id}`, // GET → TaskSnapshot
   diff: (id: string) => `/api/tasks/${id}/diff`, // GET → text/x-diff
   events: (id: string) => `/api/tasks/${id}/events`, // WS → EventEnvelope*
+  fixture: (id: string) => `/api/tasks/${id}/fixture`, // POST → CreateTaskResponse (flagged tasks only)
 } as const;
 
 // The body of every failed response.

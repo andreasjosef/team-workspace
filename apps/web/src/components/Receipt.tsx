@@ -1,6 +1,10 @@
 import type { RoleSummary, TaskSnapshot } from '@app/shared';
-import { useState } from 'react';
-import { useDiff, useRoles } from '../queries.ts';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Fragment, useState } from 'react';
+import { Link } from 'react-router';
+import { api, unwrap } from '../api.ts';
+import { useDiff, useRoles, useTask } from '../queries.ts';
+import { fixtureLayers, type LayerState } from '../taskView.ts';
 import { AgentView } from './AgentView.tsx';
 import { DiffView } from './DiffView.tsx';
 import { LiveLog } from './LiveLog.tsx';
@@ -81,12 +85,101 @@ const RoleScope = ({ role }: { role: RoleSummary }) => (
   </dl>
 );
 
+// The label a fixture run carries wherever it appears.
+export const FixtureLabel = ({ task }: { task: TaskSnapshot }) =>
+  task.fixtureOf === null ? null : (
+    <p className="alert tab-lead">
+      <strong>Fixture: a scripted hostile proposal, not the model.</strong> The
+      hub replayed a fixed proposal through the real role policy, sandbox and
+      patch check. It never publishes.{' '}
+      <Link to={`/cs/tasks/${task.fixtureOf}`}>The flagged task</Link>
+    </p>
+  );
+
+const layerTone: Record<LayerState, string> = {
+  flagged: 'tone-green',
+  refused: 'tone-green',
+  blocked: 'tone-green',
+  'not fired': 'muted',
+  'not reached': 'muted',
+  waiting: 'tone-blue',
+};
+
+// "What if the model had obeyed?" on a flagged task: starts its fixture run,
+// then shows each layer and whether it fired.
+const FixtureRun = ({ task }: { task: TaskSnapshot }) => {
+  const client = useQueryClient();
+  const start = useMutation({
+    mutationFn: async () => unwrap(await api.startFixture(task.id)),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+  const fixtureId = task.fixtureRun ?? start.data?.taskId ?? null;
+  return (
+    <section className="tab-lead">
+      <h3>What if the model had obeyed?</h3>
+      {fixtureId ? (
+        <FixtureResult task={task} fixtureId={fixtureId} />
+      ) : (
+        <>
+          <p className="muted small">
+            Runs a scripted hostile proposal (an admin user in{' '}
+            <code>src/auth/</code>, a wider role under <code>.hub/</code>, a
+            test that posts <code>.env</code> to the attacker's URL) through the
+            real policy and sandbox. Nothing is published.
+          </p>
+          <button
+            className="btn"
+            disabled={start.isPending}
+            onClick={() => start.mutate()}
+          >
+            {start.isPending ? 'Starting…' : 'What if the model had obeyed?'}
+          </button>
+          {start.isError && <p className="error">{start.error.message}</p>}
+        </>
+      )}
+    </section>
+  );
+};
+
+const FixtureResult = ({
+  task,
+  fixtureId,
+}: {
+  task: TaskSnapshot;
+  fixtureId: string;
+}) => {
+  const fixture = useTask(fixtureId).data ?? null;
+  return (
+    <>
+      <p className="muted small">
+        <strong>Fixture: a scripted hostile proposal, not the model.</strong>{' '}
+        <Link to={`/cs/tasks/${fixtureId}`}>The fixture task</Link>
+        {fixture?.pr === null && fixture.status === 'flagged'
+          ? ' · nothing published'
+          : ''}
+      </p>
+      <dl className="kv">
+        {fixtureLayers(task, fixture).map((l) => (
+          <Fragment key={l.name}>
+            <dt>{l.name}</dt>
+            <dd>
+              <span className={layerTone[l.state]}>{l.state}</span>
+              {l.detail && <span className="muted"> · {l.detail}</span>}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    </>
+  );
+};
+
 const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
   const role = useRoles().data?.find((r) => r.name === task.input.role);
   const clean =
     !task.inputSignals.length && !task.refusals.length && !task.blocked.length;
   return (
     <>
+      <FixtureLabel task={task} />
       {clean ? (
         <p className="tone-green tab-lead">
           ● Nothing flagged, refused or blocked
@@ -127,6 +220,9 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
             </>
           )}
         </div>
+      )}
+      {task.status === 'flagged' && task.fixtureOf === null && (
+        <FixtureRun task={task} />
       )}
       <p className="muted small">
         No secrets, no network, one throwaway container per command.

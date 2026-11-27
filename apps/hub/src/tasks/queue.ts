@@ -27,6 +27,7 @@ export const createTaskQueue = (opts: {
       input: task.input,
       policy: role.policy,
       rolePrompt: role.prompt,
+      fixtureOf: task.fixtureOf,
       emit: (e) => opts.store.emit(id, e),
       setDiff: (d) => opts.store.setDiff(id, d),
     };

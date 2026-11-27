@@ -50,6 +50,7 @@ import {
   removeScratch,
 } from './depsCache.ts';
 import type { HubSync } from './hubSync.ts';
+import { fixtureInference } from './fixture.ts';
 import { buildPrBody } from './prBody.ts';
 import { commitMessage, type Publisher } from './publisher.ts';
 import type { TaskHandle, TaskRunner } from './runner.ts';
@@ -106,8 +107,10 @@ export type PipelineDeps = {
 };
 
 const MAX_REFUSALS = 3;
+// With the host it tried, when the error names one, so the blocked request
+// says where it was going.
 const NETWORK_ATTEMPT =
-  /ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED/;
+  /(?:ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED)(?: [\w.-]+(?::\d+)?)?/;
 const tail = (s: string, n = 8000) => (s.length > n ? `…${s.slice(-n)}` : s);
 const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 // Caps on what the Agent tab gets: each prompt section, and per iteration
@@ -152,6 +155,7 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
         files: [...seen.diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map(
           (m) => m[1]!
         ),
+        ...(task.fixtureOf ? { fixture: true } : {}),
       });
   },
 });
@@ -200,6 +204,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   };
   const reasoning: string[] = [];
   const text = `${input.title}\n${input.text}`;
+  // A fixture run is driven by the scripted hostile proposal, not the model;
+  // everything else below is the same pipeline.
+  const inference = task.fixtureOf ? fixtureInference() : deps.inference;
 
   const run = async (
     cmd: string[],
@@ -475,7 +482,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           repo: deps.githubRepo ?? null,
         });
       }
-      const reply = await deps.inference.complete(buildTaskMessages(ctx));
+      const reply = await inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
       const parsed = parseEditsResponse(reply.value);
       if (parsed.success && parsed.value.reasoning)
@@ -528,6 +535,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
 
   const diff = await diffPaths(ws, [...touched]);
   setDiff(diff);
+  // A fixture run never publishes, whatever its checks say: it ends flagged,
+  // with what the layers stopped.
+  if (task.fixtureOf) {
+    emit({ type: 'status', status: 'flagged', reason: fixtureReason(events) });
+    return;
+  }
   // A flagged report always ends flagged: green checks never publish it
   // (a model that refused the report's instructions still produced
   // a change nobody asked for in good faith), and a loop that gave up ends
@@ -621,6 +634,13 @@ const publish = async (
     status: 'pr_opened',
     reason: `Pull request #${published.value.number} is open for a developer`,
   });
+};
+
+// What a fixture run's layers stopped, in one line.
+const fixtureReason = (events: TaskEvent[]) => {
+  const refused = events.filter((e) => e.type === 'policy_refused').length;
+  const blocked = events.filter((e) => e.type === 'blocked').length;
+  return `Fixture run: ${refused} edit${refused === 1 ? '' : 's'} refused, ${blocked} request${blocked === 1 ? '' : 's'} blocked. Nothing is published.`;
 };
 
 const readInside = async (root: string, path: string) => {

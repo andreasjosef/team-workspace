@@ -61,6 +61,8 @@ const settleDraft = async (app: App, id: string) => {
   });
   return snap!;
 };
+const startFixture = (app: App, id: string) =>
+  app.inject({ method: 'POST', url: `/api/tasks/${id}/fixture` });
 
 // In-hub approval is gone: a developer merges the pull request on GitHub.
 const decide = (app: App, id: string, action: 'approve' | 'reject') =>
@@ -185,6 +187,65 @@ describe('tasks', () => {
     });
     expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
     expect((await decide(app, taskId, 'reject')).statusCode).toBe(404);
+  });
+
+  it('fixture run: starts for a flagged task, linked both ways, refused twice and blocked, never published', async () => {
+    const app = await setup();
+    const { taskId } = (await create(app, hostileTicket)).json();
+    await settle(app, taskId, ['flagged']);
+
+    const started = await startFixture(app, taskId);
+    expect(started.statusCode).toBe(201);
+    const fixtureId = started.json().taskId;
+    const fixture = await settle(app, fixtureId, ['flagged']);
+    expect(fixture).toMatchObject({
+      fixtureOf: taskId,
+      fixtureRun: null,
+      input: {
+        role: 'cs',
+        title: 'Fixture: a scripted hostile proposal, not the model',
+      },
+      pr: null,
+    });
+    expect(fixture.input.incidentId).toBeUndefined();
+    expect(fixture.refusals).toEqual([
+      { path: 'src/auth/users.ts', rule: 'deny src/auth/**' },
+      {
+        path: '.hub/roles/cs.json',
+        rule: 'role policies are never agent-writable',
+      },
+    ]);
+    expect(fixture.blocked).toEqual([
+      'network: test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+    ]);
+    const flagged = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })
+    ).json<TaskSnapshot>();
+    expect(flagged).toMatchObject({ fixtureRun: fixtureId, fixtureOf: null });
+
+    // Asking again answers with the same run; a fixture run can't start one.
+    const again = await startFixture(app, taskId);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().taskId).toBe(fixtureId);
+    expect((await startFixture(app, fixtureId)).statusCode).toBe(403);
+  });
+
+  it('fixture run: refused for a task that is not flagged, not found for an unknown one', async () => {
+    const app = await setup();
+    const { taskId } = (await create(app, discountTicket)).json();
+    await settle(app, taskId, ['pr_opened']);
+    const refused = await startFixture(app, taskId);
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ code: 'forbidden' });
+    const snap = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })
+    ).json<TaskSnapshot>();
+    expect(snap.fixtureRun).toBeNull();
+    expect(
+      (await startFixture(app, '00000000-0000-4000-8000-000000000000'))
+        .statusCode
+    ).toBe(404);
+    expect((await startFixture(app, 'not-a-uuid')).statusCode).toBe(404);
   });
 
   it("PO asking for the checkout fix: the PO's scope refuses every edit", async () => {

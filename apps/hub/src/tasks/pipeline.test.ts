@@ -50,6 +50,7 @@ import {
   type Publisher,
   type PublishInput,
 } from './publisher.ts';
+import { FIXTURE_COLLECTOR, FIXTURE_INPUT, FIXTURE_TEST } from './fixture.ts';
 import { git } from './workspace.ts';
 
 // The real pipeline from forward to outcome, without a VM: a throwaway hub
@@ -300,7 +301,11 @@ const fakePipeline = (opts: PipelineFakes) =>
   });
 
 const runTask = async (
-  opts: PipelineFakes & { input: CreateTaskInput; id?: string }
+  opts: PipelineFakes & {
+    input: CreateTaskInput;
+    id?: string;
+    fixtureOf?: string;
+  }
 ) => {
   const role = opts.hub.roles.get(opts.input.role)!;
   const events: TaskEvent[] = [];
@@ -313,6 +318,7 @@ const runTask = async (
     input: opts.input,
     policy: role.policy,
     rolePrompt: role.prompt,
+    fixtureOf: opts.fixtureOf ?? null,
     emit: (e) => events.push(e),
     setDiff: (d) => (diff = d),
   });
@@ -866,7 +872,8 @@ describe('pipeline', () => {
     expect(out.events).toContainEqual({
       type: 'blocked',
       kind: 'network',
-      detail: 'test run: getaddrinfo ENOTFOUND (sandbox has no network)',
+      detail:
+        'test run: getaddrinfo ENOTFOUND collector.attacker.example (sandbox has no network)',
     });
   });
 
@@ -1018,6 +1025,70 @@ describe('pipeline', () => {
     expect(snap!.pr).toBeNull();
     expect(snap!.baseSha).toMatch(/^[0-9a-f]{40}$/);
     await app.close();
+  });
+
+  it('fixture run: the scripted hostile proposal is refused twice, its test run blocked, nothing published', async () => {
+    const hub = await makeHub();
+    // The fixture's test fails the way it would in a real sandbox: no .env,
+    // no network, so the post to the collector can't resolve its host.
+    const sandbox = shopSandbox({
+      [CHECK]: async (call) =>
+        (await readWork(call, FIXTURE_TEST))
+          ? check(1, {
+              testOutput: `Error: POST ${FIXTURE_COLLECTOR}: Error: getaddrinfo EAI_AGAIN collector.attacker.example`,
+            })
+          : check(0),
+    });
+    // The model is never asked: the fixture drives the run.
+    const model = scriptedInference([fix]);
+    const published: unknown[] = [];
+    const publisher: Publisher = {
+      publish: async (req) => {
+        published.push(req);
+        return fail('unexpected', 'a fixture run must never publish');
+      },
+    };
+
+    const out = await runTask({
+      hub,
+      input: FIXTURE_INPUT,
+      fixtureOf: 'flagged-1',
+      sandbox,
+      inference: model,
+      publisher,
+    });
+
+    expect(out.status).toBe('flagged');
+    expect(out.reason).toMatch(
+      /^Fixture run: 2 edits refused, 1 request blocked/
+    );
+    expect(
+      out.events.flatMap((e) =>
+        e.type === 'policy_refused' ? [[e.path, e.rule]] : []
+      )
+    ).toEqual([
+      ['src/auth/users.ts', 'deny src/auth/**'],
+      ['.hub/roles/cs.json', 'role policies are never agent-writable'],
+    ]);
+    expect(out.events).toContainEqual({
+      type: 'blocked',
+      kind: 'network',
+      detail:
+        'test run: EAI_AGAIN collector.attacker.example (sandbox has no network)',
+    });
+    expect(model.calls).toHaveLength(0);
+    // The reply is the template: a fixture run never asks the model.
+    expect(out.events.at(-1)).toEqual({
+      type: 'reply_draft',
+      ...templateReply('flagged'),
+    });
+    expect(model.draftCalls).toHaveLength(0);
+    expect(published).toHaveLength(0);
+    expect(out.pr).toBeUndefined();
+    expect(out.phases).not.toContain('publish');
+    expect(await hubGit(hub, ['branch', '--list', 'task/*'])).toBe('');
+    // The refused paths never reach the diff; the applied test does.
+    expect(out.diffPaths).toEqual([FIXTURE_TEST]);
   });
 
   it('counts a refused answer once: two refusals stay under the halt at three', async () => {

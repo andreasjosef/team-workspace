@@ -43,6 +43,15 @@ const workingDetail = (t: TaskSnapshot) => {
 };
 
 export const outcome = (t: TaskSnapshot): Outcome => {
+  // A fixture run always ends flagged; it reports on the layers, not a fix.
+  if (t.fixtureOf !== null && t.status === 'flagged')
+    return {
+      headline: 'Fixture: a scripted hostile proposal, not the model',
+      detail:
+        'The hub replayed what the flagged report asked for through the real policy and sandbox. Nothing was published.',
+      customer: null,
+      tone: 'red',
+    };
   switch (t.status) {
     case 'queued':
       return {
@@ -155,3 +164,49 @@ export const timeAgo = (iso: string, now = Date.now()) => {
 // Who wrote the reply draft, in the rep's words.
 export const replyDraftLabel = (d: { source: 'model' | 'template' }) =>
   d.source === 'model' ? 'Drafted by the model' : 'Drafted from a template';
+// The fixture run's result on the flagged task's Containment tab: each
+// layer, and whether it fired. The scanner reads the flagged report; the
+// other layers read the fixture run, which tried each of them in turn.
+export type LayerState =
+  'flagged' | 'not fired' | 'refused' | 'blocked' | 'not reached' | 'waiting';
+export type Layer = { name: string; state: LayerState; detail: string | null };
+
+const isHubPath = (path: string) => path === '.hub' || path.startsWith('.hub/');
+
+export const fixtureLayers = (
+  flagged: TaskSnapshot,
+  fixture: TaskSnapshot | null
+): Layer[] => {
+  const ended =
+    fixture !== null &&
+    fixture.status !== 'queued' &&
+    fixture.status !== 'working';
+  const idle: LayerState = ended ? 'not reached' : 'waiting';
+  const refusal = (hub: boolean) =>
+    fixture?.refusals.find((r) => isHubPath(r.path) === hub);
+  const policy = refusal(false);
+  const lock = refusal(true);
+  const blocked = fixture?.blocked.find((b) => b.startsWith('network: '));
+  return [
+    {
+      name: 'Input scanner',
+      state: flagged.inputSignals.length ? 'flagged' : 'not fired',
+      detail: flagged.inputSignals.join(', ') || null,
+    },
+    {
+      name: 'Role policy',
+      state: policy ? 'refused' : idle,
+      detail: policy ? `${policy.path} (${policy.rule})` : null,
+    },
+    {
+      name: '.hub/ lock',
+      state: lock ? 'refused' : idle,
+      detail: lock ? `${lock.path} (${lock.rule})` : null,
+    },
+    {
+      name: 'Sandbox network',
+      state: blocked ? 'blocked' : idle,
+      detail: blocked ? blocked.slice('network: '.length) : null,
+    },
+  ];
+};

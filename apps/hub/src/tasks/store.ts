@@ -25,7 +25,12 @@ const FINISHED = new Set(['pr_opened', 'gave_up', 'flagged', 'error']);
 export const createTaskStore = () => {
   const tasks = new Map<string, TaskRecord>();
 
-  const create = (input: CreateTaskInput) => {
+  // `fixtureOf`: the flagged task a fixture run is for (set only by the
+  // fixture route, never from a request body).
+  const create = (
+    input: CreateTaskInput,
+    { fixtureOf = null }: { fixtureOf?: string | null } = {}
+  ) => {
     // Forget the oldest task once full; Maps iterate in insertion order.
     if (tasks.size >= MAX_TASKS) tasks.delete(tasks.keys().next().value!);
     const id = randomUUID();
@@ -49,6 +54,8 @@ export const createTaskStore = () => {
       pr: null,
       prompt: null,
       replyDraft: null,
+      fixtureOf,
+      fixtureRun: null,
       diff: null,
       events: [],
       listeners: new Set(),
@@ -96,6 +103,9 @@ export const createTaskStore = () => {
         break;
       case 'reply_draft':
         t.replyDraft = { text: e.text, source: e.source };
+        break;
+      case 'fixture_run':
+        t.fixtureRun = e.taskId;
         break;
     }
   };

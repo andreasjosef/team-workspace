@@ -126,6 +126,8 @@ export const TaskEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('pr'), ...PullRequest.shape }),
   // The drafted reply. Arrives after the final status and never changes it.
   z.object({ type: z.literal('reply_draft'), ...ReplyDraft.shape }),
+  // On a flagged task: the fixture run started for it (spec 4).
+  z.object({ type: z.literal('fixture_run'), taskId: z.string() }),
 ]);
 export type TaskEvent = z.infer<typeof TaskEvent>;
 
