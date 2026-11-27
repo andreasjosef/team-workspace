@@ -4,6 +4,7 @@ import {
   ContextDoc,
   IterationAnswer,
   PullRequest,
+  ReplyDraft,
   TaskStatus,
 } from './events.ts';
 import { Role, TaskKind } from './roles.ts';
@@ -58,6 +59,8 @@ export const TaskSnapshot = z.object({
   pr: PullRequest.nullable(),
   // The prompt of the agent's first call, once it made one.
   prompt: AgentPrompt.nullable(),
+  // The reply drafted for the support rep, once the task has ended.
+  replyDraft: ReplyDraft.nullable(),
 });
 export type TaskSnapshot = z.infer<typeof TaskSnapshot>;
 

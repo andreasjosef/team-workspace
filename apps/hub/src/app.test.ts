@@ -50,6 +50,18 @@ const settle = async (app: App, id: string, until: TaskStatus[]) => {
   return snap!;
 };
 
+// The reply draft arrives after the final status.
+const settleDraft = async (app: App, id: string) => {
+  let snap: TaskSnapshot | undefined;
+  await vi.waitFor(async () => {
+    snap = (
+      await app.inject({ method: 'GET', url: `/api/tasks/${id}` })
+    ).json();
+    expect(snap!.replyDraft).not.toBeNull();
+  });
+  return snap!;
+};
+
 // In-hub approval is gone: a developer merges the pull request on GitHub.
 const decide = (app: App, id: string, action: 'approve' | 'reject') =>
   app.inject({
@@ -113,6 +125,15 @@ describe('tasks', () => {
       url: `/api/tasks/${taskId}/diff`,
     });
     expect(diff.body).toContain('toUpperCase()');
+    // The mock's canned reply draft follows the final status.
+    const drafted = await settleDraft(app, taskId);
+    expect(drafted.status).toBe('pr_opened');
+    expect(drafted.replyDraft).toMatchObject({
+      source: 'model',
+      text: expect.stringContaining(
+        "a fix is waiting for a developer's review"
+      ),
+    });
 
     // No route in the hub approves, rejects or merges anything.
     expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
@@ -158,6 +179,10 @@ describe('tasks', () => {
     );
     // Nothing published, and nothing in the hub to approve or reject it.
     expect(flagged.pr).toBeNull();
+    // The hostile text never shapes the reply: the flagged template.
+    expect((await settleDraft(app, taskId)).replyDraft).toMatchObject({
+      source: 'template',
+    });
     expect((await decide(app, taskId, 'approve')).statusCode).toBe(404);
     expect((await decide(app, taskId, 'reject')).statusCode).toBe(404);
   });
@@ -214,7 +239,7 @@ describe('tasks', () => {
                 events.push(
                   e.type === 'status' ? `status:${e.status}` : e.type
                 );
-                if (e.type === 'status' && e.status === 'pr_opened') {
+                if (e.type === 'reply_draft') {
                   ws.terminate();
                   done();
                 }
@@ -225,8 +250,9 @@ describe('tasks', () => {
     });
     expect(events[0]).toBe('status:working');
     expect(events).toContain('context');
-    // The pull request comes before the status that says it's open.
-    expect(events.slice(-2)).toEqual(['pr', 'status:pr_opened']);
+    // The pull request comes before the status that says it's open; the
+    // reply draft comes after it.
+    expect(events.slice(-3)).toEqual(['pr', 'status:pr_opened', 'reply_draft']);
   });
 
   it('reports a crashed runner as an error', async () => {

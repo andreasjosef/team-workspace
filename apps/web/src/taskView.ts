@@ -151,3 +151,7 @@ export const timeAgo = (iso: string, now = Date.now()) => {
   if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86_400)}d ago`;
 };
+
+// Who wrote the reply draft, in the rep's words.
+export const replyDraftLabel = (d: { source: 'model' | 'template' }) =>
+  d.source === 'model' ? 'Drafted by the model' : 'Drafted from a template';

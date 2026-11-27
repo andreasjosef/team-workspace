@@ -4,6 +4,7 @@ import { Dot, Status } from '../components/common.tsx';
 import { ForwardButton } from '../components/ForwardButton.tsx';
 import { OutcomeCard } from '../components/Outcome.tsx';
 import { ReceiptTabs } from '../components/Receipt.tsx';
+import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
 import { useIncidents, useTasks } from '../queries.ts';
 import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
 
@@ -74,6 +75,7 @@ const Report = ({ report }: { report: Incident }) => {
       </p>
       <h1 className="focus-title">{report.subject}</h1>
       {task && <OutcomeCard task={task} />}
+      {task && <ReplyDraftBox task={task} />}
       <section className="message">
         <div className="untrusted-label">
           {report.customer} wrote · treated as untrusted

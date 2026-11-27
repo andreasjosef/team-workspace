@@ -3,6 +3,7 @@ import {
   buildTaskMessages,
   checkCommand,
   checkPolicy,
+  draftReply,
   filesFromErrors,
   isCreate,
   isTestPath,
@@ -17,6 +18,7 @@ import {
   type CheckCounts,
   type CheckOutcome,
   type Edit,
+  type FinalStatus,
   type Inference,
   type TaskContext,
 } from '@app/agent';
@@ -99,6 +101,8 @@ export type PipelineDeps = {
   // GITHUB_REPO as `owner/name`, when set: the Agent tab links to `.hub/`
   // at the task's base commit there.
   githubRepo?: string;
+  // How long the reply draft may take before the template stands in.
+  draftTimeoutMs?: number;
 };
 
 const MAX_REFUSALS = 3;
@@ -118,13 +122,72 @@ const REJECTION_NOTE =
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
     const ws = await createWorkspace(deps.tasksDir, task.id);
+    // What the reply draft needs, picked off the stream as it passes.
+    const seen = {
+      status: null as string | null,
+      decisions: [] as { id: string; title: string }[],
+      diff: '',
+    };
+    const watched: TaskHandle = {
+      ...task,
+      emit: (e) => {
+        if (e.type === 'status') seen.status = e.status;
+        if (e.type === 'context') seen.decisions = e.decisions;
+        task.emit(e);
+      },
+      setDiff: (d) => {
+        seen.diff = d;
+        task.setDiff(d);
+      },
+    };
     try {
-      await runTask(deps, task, ws);
+      await runTask(deps, watched, ws);
     } finally {
       if (!deps.keepWorkspaces) await removeWorkspace(ws);
     }
+    if (isFinal(seen.status))
+      await emitReplyDraft(deps, task, {
+        status: seen.status,
+        decisions: seen.decisions,
+        files: [...seen.diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map(
+          (m) => m[1]!
+        ),
+      });
   },
 });
+
+const FINAL: readonly string[] = ['pr_opened', 'gave_up', 'flagged', 'error'];
+const isFinal = (status: string | null): status is FinalStatus =>
+  status !== null && FINAL.includes(status);
+
+// The reply the support rep can send, drafted once the status is final: one
+// more model call for the outcomes a model may describe, the template for
+// the rest and for any draft that fails its rules. It never changes the
+// status. Fixture runs pass `fixture: true` to get the template.
+const emitReplyDraft = async (
+  deps: PipelineDeps,
+  { input, emit }: TaskHandle,
+  facts: {
+    status: FinalStatus;
+    decisions: { id: string; title: string }[];
+    files: string[];
+    fixture?: boolean;
+  }
+) => {
+  const { draft, fallback } = await draftReply(
+    deps.inference,
+    {
+      ...facts,
+      title: input.title,
+      report: input.text,
+      ...(input.incidentId ? { incidentId: input.incidentId } : {}),
+    },
+    deps.draftTimeoutMs === undefined ? {} : { timeoutMs: deps.draftTimeoutMs }
+  );
+  if (fallback)
+    emit({ type: 'log', message: `Reply draft: the template (${fallback})` });
+  emit({ type: 'reply_draft', ...draft });
+};
 
 const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const { id, input, setDiff } = task;
