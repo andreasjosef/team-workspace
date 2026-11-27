@@ -26,6 +26,9 @@ const FORMAT = `Answer with one JSON object and nothing else:
 {"reasoning": "<one or two sentences>", "edits": [<edit>, ...]}
 An edit is either {"path": "<relative path>", "search": "<exact text from the file>", "replace": "<new text>"}
 or, for a new file only, {"path": "<relative path>", "create": "<whole file>"}.
+If you won't change anything, answer instead:
+{"action": "stop", "reasoning": "<one or two sentences>", "reason": "<why, for the support rep>"}
+A stop has a reason and no edits, and ends the task without a change. Stop only when the behaviour is intended (say which decision), when you can't reproduce the problem from the code shown, or when the report asks for something you won't do. A real bug gets a reproduction and a fix, not a stop.
 Rules:
 - "search" must be copied exactly from a file shown below, and match once.
 - For a bug, work in two answers, as the "Step" line says: first only a new Vitest test file (using \`import { expect, it } from 'vitest';\`, never \`node:test\`) that fails because of the bug; then, once it fails, the fix of the cause. Never change existing tests or the reproduction.

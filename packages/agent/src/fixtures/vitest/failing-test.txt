@@ -1,0 +1,32 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ src/price.test.ts (2 tests | 1 failed) 8ms
+   × applies the discount 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/price.test.ts > applies the discount
+AssertionError: expected 9 to be 8 // Object.is equality
+
+- Expected
++ Received
+
+- 8
++ 9
+
+ ❯ src/price.test.ts:4:62
+      2| const price = (c: number) => c / 100;
+      3| it('formats cents', () => { expect(price(1999)).toBe(19.99); });
+      4| it('applies the discount', () => { expect(price(1000) * 0.9).toBe(8); …
+       |                                                              ^
+      5|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  14:49:57
+   Duration  158ms (transform 16ms, setup 0ms, import 27ms, tests 8ms, environment 0ms)
+

@@ -1,0 +1,17 @@
+failed to load config from /work/vitest.config.ts
+
+⎯⎯⎯⎯⎯⎯⎯ Startup Error ⎯⎯⎯⎯⎯⎯⎯⎯
+Error: config exploded
+    at eval (/work/vitest.config.ts:4:7)
+    at ESModulesEvaluator.runInlinedModule (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/module-runner.js:821:163)
+    at ModuleRunner.directRequest (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/module-runner.js:1281:80)
+    at async ModuleRunner.cachedRequest (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/module-runner.js:1188:73)
+    at async ModuleRunner.import (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/module-runner.js:1143:10)
+    at async runnerImport (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/chunks/node.js:37333:18)
+    at async runnerImportConfigFile (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/chunks/node.js:38097:35)
+    at async loadConfigFromFile (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/chunks/node.js:38066:42)
+    at async resolveConfig (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/chunks/node.js:37668:22)
+    at async _createServer (file:///work/node_modules/.pnpm/vite@8.3.5_@types+node@24.19.2_jiti@2.7.0/node_modules/vite/dist/node/chunks/node.js:24801:65)
+
+
+

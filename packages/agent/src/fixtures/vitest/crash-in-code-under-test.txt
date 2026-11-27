@@ -1,0 +1,26 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ src/cart.test.ts (2 tests | 1 failed) 5ms
+   × totals an empty cart 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/cart.test.ts > totals an empty cart
+TypeError: Cannot read properties of undefined (reading 'reduce')
+ ❯ total src/cart.test.ts:2:70
+      1| import { expect, it } from 'vitest';
+      2| const total = (cart: { items?: { price: number }[] }) => cart.items!.r…
+       |                                                                      ^
+      3| it('totals an empty cart', () => { expect(total({})).toBe(0); });
+      4| it('totals one item', () => { expect(total({ items: [{ price: 2 }] }))…
+ ❯ src/cart.test.ts:3:43
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  14:49:58
+   Duration  160ms (transform 16ms, setup 0ms, import 27ms, tests 5ms, environment 0ms)
+

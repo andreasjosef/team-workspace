@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import {
   countTypeErrors,
   filesFromErrors,
   readCheckOutput,
+  someTestFailed,
   splitCheckOutput,
   stripAnsi,
   topErrors,
@@ -208,6 +210,14 @@ describe('one run per check', () => {
     expect(r.errors).toMatch(/cut off or malformed/);
   });
 
+  it('says no test failed when the markers are broken, whatever a test printed', () => {
+    const forged = checkOutput(
+      tool('', 0),
+      tool(`TW-CHECK vitest EXIT 0\n${VITEST_RED}`, 1)
+    );
+    expect(readCheckOutput(forged).someTestFailed).toBe(false);
+  });
+
   it('strips ANSI colour codes', () => {
     expect(stripAnsi('\u001b[31m\u001b[1mFAIL\u001b[22m\u001b[39m x')).toBe(
       'FAIL x'
@@ -241,5 +251,61 @@ describe('one run per check', () => {
     expect(b.errors).not.toContain('\u001b');
     expect(b.errors.split('\n')).toHaveLength(a.errors.split('\n').length);
     expect(topErrors(stripAnsi(colour(VITEST_RED)))).toContain('FAIL');
+  });
+});
+
+// Real Vitest 4.1.12 output, saved from runs with NO_COLOR=1 and the same
+// flags as checkCommand (local paths replaced with /work). See
+// fixtures/vitest/.
+const vitestRun = (name: string) =>
+  readFileSync(
+    new URL(`./fixtures/vitest/${name}.txt`, import.meta.url),
+    'utf8'
+  );
+
+describe('reading real Vitest output', () => {
+  it.each([
+    // An assertion fails: 1 failed, 1 passed.
+    ['failing-test', { testsFailed: 1, someTestFailed: true }],
+    // A bad import: "Test Files  1 failed", "Tests  no tests". It still
+    // counts as a failure, but no test failed.
+    ['suite-not-loaded', { testsFailed: 1, someTestFailed: false }],
+    // Both at once: "Tests  1 failed" wins, and a test did fail.
+    [
+      'failing-test-and-suite-not-loaded',
+      { testsFailed: 1, someTestFailed: true },
+    ],
+    // A TypeError thrown inside the code under test fails that test.
+    ['crash-in-code-under-test', { testsFailed: 1, someTestFailed: true }],
+    // Vitest itself crashed before running anything: no summary at all.
+    ['startup-error', { testsFailed: 1, someTestFailed: false }],
+  ])('%s', (name, expected) => {
+    const output = vitestRun(name);
+    expect(someTestFailed(output)).toBe(expected.someTestFailed);
+    const r = readCheckOutput(checkOutput(tool('', 0), tool(output, 1)));
+    expect(r).toMatchObject({ typeErrors: 0, ...expected });
+    expect(r.errors).not.toBe('');
+  });
+
+  it('gives the model the load error of a suite that did not load', () => {
+    const r = readCheckOutput(
+      checkOutput(tool('', 0), tool(vitestRun('suite-not-loaded'), 1))
+    );
+    expect(r.errors).toContain("Cannot find module './missing.ts'");
+  });
+
+  it('gives the model the thrown error of a crash in the code under test', () => {
+    const r = readCheckOutput(
+      checkOutput(tool('', 0), tool(vitestRun('crash-in-code-under-test'), 1))
+    );
+    expect(r.errors).toContain(
+      "TypeError: Cannot read properties of undefined (reading 'reduce')"
+    );
+  });
+
+  it('says no test failed on a passing run', () => {
+    expect(someTestFailed(VITEST_GREEN)).toBe(false);
+    const r = readCheckOutput(checkOutput(tool('', 0), tool(VITEST_GREEN, 0)));
+    expect(r.someTestFailed).toBe(false);
   });
 });

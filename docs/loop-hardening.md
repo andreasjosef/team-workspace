@@ -41,6 +41,7 @@ Files: `packages/agent/src/fixLoop.ts`, `stop.ts`, `checks.ts`, `edits.ts`, `pro
 
 - Rejected answers don't go into `history` and don't emit an iteration row. Patience and the curve count only sandbox checks.
 - A separate cap on model calls (rejected answers included), so cost and termination stay bounded.
+- (Decided while implementing #41; review in PR #48.) Each step of a bug task gets its own `maxIterations` budget of checks (spec #41, story 12). Discarded reproductions ran in the sandbox, so they stay on the curve, but the fix step's checks and patience count from the accepted reproduction. Patience doesn't apply in the reproduce step: a reproduction raises the count on purpose.
 - Later, an attempt log in the prompt: the last 2–3 iterations, so the model doesn't repeat itself. It holds only host facts (paths, rejection reasons, counts), or wraps the model's reasoning with `wrapUntrusted`: that reasoning is shaped by the customer's text, and feeding it back raw would get around the untrusted-text rule.
 - Later, rollback in the fix step: if a check makes the total worse than the best so far in this step, restore the edited files, delete the created ones, roll back `touched`, and send the errors back. That's more work than the rest (snapshots, created files, `touched`), so it comes after.
 

@@ -219,8 +219,11 @@ const layers = (
 // The Run tab: each check as one step, with what happened in a word. The
 // verdicts follow the fix loop's rules (packages/agent/src/fixLoop.ts): a
 // bug is reproduced (more tests fail than at the baseline) before it's
-// fixed, and an answer that was rejected or refused leaves the counts as
-// they were. Read from the snapshot only, never from the model's words.
+// fixed. Only checks that ran are steps: the hub's loop gives an answer
+// refused before the sandbox no step (its notes are in the log), so
+// `rejected` is a reproduction that ran and was discarded, and `refused`
+// comes only from the mock runner's canned runs. Read from the snapshot
+// only, never from the model's words.
 export type StepVerdict =
   | 'baseline'
   | 'reproduced'

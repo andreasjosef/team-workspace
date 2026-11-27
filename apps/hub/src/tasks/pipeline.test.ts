@@ -3,6 +3,7 @@ import {
   templateReply,
   type ChatMessage,
   type EditsResponse,
+  type StopAnswer,
   type Inference,
 } from '@app/agent';
 import type {
@@ -228,11 +229,25 @@ const CLEAN_DRAFT =
 const isDraftCall = (messages: ChatMessage[]) =>
   messages[0]?.content.startsWith('Write the reply') ?? false;
 
+// What each scripted fix-loop reply reports it cost.
+const SCRIPTED_USAGE = {
+  promptTokens: 1500,
+  completionTokens: 90,
+  totalTokens: 1590,
+};
+const SCRIPTED_CALL_LOG =
+  'Model call: finish_reason stop, tokens 1500 prompt, 90 completion, 1590 total';
+// The reply draft's call reports no usage.
+const DRAFT_CALL_LOG = {
+  type: 'log',
+  message: 'Model call: finish_reason stop, tokens not reported',
+} as const;
+
 // Replies in order; the last one repeats. An object is sent as JSON. The
 // reply draft's call is answered by `draft` and kept apart in `draftCalls`,
 // so `calls` holds only the fix loop's.
 const scriptedInference = (
-  replies: (EditsResponse | string)[],
+  replies: (EditsResponse | StopAnswer | string)[],
   {
     draft = async () => ok(CLEAN_DRAFT),
   }: { draft?: () => Promise<Result<string>> } = {}
@@ -243,11 +258,18 @@ const scriptedInference = (
     complete: async (messages) => {
       if (isDraftCall(messages)) {
         draftCalls.push(messages);
-        return draft();
+        const r = await draft();
+        return r.success
+          ? ok({ content: r.value, finishReason: 'stop', usage: null })
+          : r;
       }
       const reply = replies[Math.min(calls.length, replies.length - 1)]!;
       calls.push(messages);
-      return ok(typeof reply === 'string' ? reply : JSON.stringify(reply));
+      return ok({
+        content: typeof reply === 'string' ? reply : JSON.stringify(reply),
+        finishReason: 'stop',
+        usage: SCRIPTED_USAGE,
+      });
     },
   };
   return { inference, calls, draftCalls };
@@ -489,13 +511,14 @@ describe('pipeline', () => {
     expect(body).toContain(`\`${REPRO_TEST}\``);
     expect(out.phases).toEqual(['context', 'baseline', 'fix', 'publish']);
     // The pull request comes first, then the status that says so, then the
-    // reply draft, which the scripted model wrote within the rules.
+    // draft call's log line and the reply draft, which the scripted model
+    // wrote within the rules.
     expect(out.events.at(-1)).toEqual({
       type: 'reply_draft',
       text: CLEAN_DRAFT,
       source: 'model',
     });
-    expect(out.events.at(-3)).toEqual({
+    expect(out.events.at(-4)).toEqual({
       type: 'pr',
       url: `file://${hub.repoDir}#task/t1`,
       number: 1,
@@ -575,12 +598,12 @@ describe('pipeline', () => {
     });
 
     expect(out.status).toBe('pr_opened');
-    // The rejected answer used an iteration with the counts unchanged and no
-    // check; then red, then green.
+    // The rejected answer ran no check and gets no iteration: the baseline,
+    // then red, then green.
     const curve = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e.testsFailed] : []
     );
-    expect(curve).toEqual([0, 0, 1, 0]);
+    expect(curve).toEqual([0, 1, 0]);
     expect(sandbox.lines().filter((l) => l.includes(CHECK))).toHaveLength(3);
     // Each prompt names its step; the step after a rejection says why.
     const user = (i: number) => model.calls[i]![1]!.content;
@@ -655,31 +678,39 @@ describe('pipeline', () => {
     for (const s of prompt!.sections.filter((s) => s.text.length === s.chars))
       expect(`${sent![0]!.content}\n${sent![1]!.content}`).toContain(s.text);
 
-    // Each iteration carries what the model answered; a rejected answer
-    // says why. The baseline carries none.
+    // Each iteration carries what the model answered on the call it
+    // checked. The baseline carries none.
     const iterations = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e] : []
     );
+    expect(iterations).toHaveLength(3);
     expect(iterations[0]).toEqual({
       type: 'iteration',
       n: 0,
       typeErrors: 0,
       testsFailed: 0,
     });
-    expect(iterations[1]).toMatchObject({
-      reasoning: together.reasoning,
-      proposed: [
-        { path: REPRO_TEST, create: true },
-        { path: 'src/checkout/discount.ts', create: false },
-      ],
-      rejected: expect.stringContaining('may add only new test files'),
-    });
-    expect(iterations[2]).toMatchObject({
+    expect(iterations[1]).toEqual({
+      type: 'iteration',
+      n: 1,
+      typeErrors: 0,
+      testsFailed: 1,
       reasoning: reproduce.reasoning,
       proposed: [{ path: REPRO_TEST, create: true }],
     });
+    expect(iterations[2]).toMatchObject({ n: 2, reasoning: fix.reasoning });
     expect(iterations[2]).not.toHaveProperty('rejected');
-    expect(iterations[3]).toMatchObject({ reasoning: fix.reasoning });
+    // The rejected answer ran no check, so it has no iteration: what the
+    // model said and why it wasn't taken stay in the log.
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    expect(logs).toContain(`Model call 1: ${together.reasoning}`);
+    expect(logs).toContainEqual(
+      expect.stringMatching(
+        /^Model call 1: answer rejected \(.*may add only new test files.*src\/checkout\/discount\.ts/s
+      )
+    );
   });
 
   it('INC-1042: a reproduction that passes is discarded and never reaches the diff', async () => {
@@ -757,11 +788,83 @@ describe('pipeline', () => {
     expect(beforeModel!.slice(1)).toEqual([expect.stringContaining(CHECK)]);
   });
 
+  it('logs each model call once, with its finish_reason and token usage', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    expect(out.status).toBe('pr_opened');
+    const callLogs = out.events.flatMap((e) =>
+      e.type === 'log' && e.message.startsWith('Model call:') ? [e.message] : []
+    );
+    // Two fix-loop calls, then the reply draft's, which reports no usage.
+    expect(model.calls).toHaveLength(2);
+    expect(model.draftCalls).toHaveLength(1);
+    expect(callLogs).toEqual([
+      SCRIPTED_CALL_LOG,
+      SCRIPTED_CALL_LOG,
+      DRAFT_CALL_LOG.message,
+    ]);
+  });
+
+  it('a failed call gets its model-call line too, naming the finish_reason and usage', async () => {
+    const hub = await makeHub();
+    const model = scriptedInference([reproduce, fix]);
+    const complete = model.inference.complete;
+    let first = true;
+    model.inference.complete = async (messages) => {
+      if (first && !isDraftCall(messages)) {
+        first = false;
+        return fail(
+          'unavailable',
+          'Inference returned no content (finish_reason: length; tokens 1500 prompt, 0 completion, 1500 total)'
+        );
+      }
+      return complete(messages);
+    };
+
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: model,
+    });
+
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    // One line per model call: the failed one first, then the answered
+    // ones (the fix loop's, and the reply draft's).
+    const callLogs = logs.filter((m) => m.startsWith('Model call:'));
+    expect(callLogs).toHaveLength(
+      1 + model.calls.length + model.draftCalls.length
+    );
+    expect(callLogs[0]).toBe(
+      'Model call: failed (Inference returned no content (finish_reason: length; tokens 1500 prompt, 0 completion, 1500 total))'
+    );
+    expect(callLogs.slice(1)).toEqual([
+      ...model.calls.map(() => SCRIPTED_CALL_LOG),
+      DRAFT_CALL_LOG.message,
+    ]);
+  });
+
   it('runs each check as one sandbox call with no network, counting what it printed', async () => {
     const hub = await makeHub();
     const sandbox = fakeSandbox({
       'npm install': 'added 42 packages',
-      [CHECK]: [check(0), check(1, { typeErrors: 2 }), check(0)],
+      // The type errors are there from the start: a reproduction that adds
+      // type errors is discarded.
+      [CHECK]: [
+        check(0, { typeErrors: 2 }),
+        check(1, { typeErrors: 2 }),
+        check(0),
+      ],
     });
     const model = scriptedInference([reproduce, fix]);
 
@@ -786,7 +889,7 @@ describe('pipeline', () => {
       e.type === 'iteration' ? [[e.typeErrors, e.testsFailed]] : []
     );
     expect(counts).toEqual([
-      [0, 0],
+      [2, 0],
       [2, 1],
       [0, 0],
     ]);
@@ -796,8 +899,9 @@ describe('pipeline', () => {
     const hub = await makeHub();
     const sandbox = fakeSandbox({
       'npm install': 'added 42 packages',
+      // Type errors from the start, as above.
       [CHECK]: [
-        check(0),
+        check(0, { typeErrors: 2 }),
         check(1, {
           typeErrors: 2,
           testOutput:
@@ -974,15 +1078,20 @@ describe('pipeline', () => {
     );
     expect(refused).toContain('src/auth/users.ts');
     expect(refused).toContain('.hub/roles/cs.json');
-    // The Agent tab shows the refusals on the iteration that proposed them.
-    const first = out.events.find((e) => e.type === 'iteration' && e.n === 1);
-    expect(first).toMatchObject({
-      reasoning: 'Checkout needs the ops account.',
-      refused: expect.arrayContaining([
-        expect.objectContaining({ path: 'src/auth/users.ts' }),
-        expect.objectContaining({ path: '.hub/roles/cs.json' }),
-      ]),
-    });
+    // A refused answer runs no check, so it has no iteration: the Agent
+    // tab's log shows what the model said and the refusals.
+    expect(
+      out.events.filter((e) => e.type === 'iteration').map((e) => e.n)
+    ).toEqual([0]);
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    expect(logs).toContain('Model call 1: Checkout needs the ops account.');
+    expect(logs).toContainEqual(
+      expect.stringMatching(
+        /^Model call 1: answer rejected \(src\/auth\/users\.ts: .*\.hub\/roles\/cs\.json/
+      )
+    );
     for (const path of refused) expect(out.diff).not.toContain(path);
   });
 
@@ -1004,7 +1113,63 @@ describe('pipeline', () => {
 
     expect(out.events.some((e) => e.type === 'input_flagged')).toBe(false);
     expect(out.status).toBe('gave_up');
-    expect(out.reason).toMatch(/^error count stopped falling/);
+    // The empty answers are rejected before the sandbox, so they run no
+    // check and leave patience alone: the model-call cap ends the run.
+    expect(out.reason).toBe('reached the cap of 10 model calls');
+    expect(
+      out.events.filter((e) => e.type === 'iteration').map((e) => e.n)
+    ).toEqual([0, 1]);
+  });
+
+  it('a stop answer ends the task gave_up with the model reason, and nothing is published, even after an applied fix', async () => {
+    const hub = await makeHub();
+    const wrongFix: EditsResponse = {
+      reasoning: 'Maybe the input is not a string.',
+      edits: [
+        {
+          path: 'src/checkout/discount.ts',
+          search: 'CODES[input.trim()]',
+          replace: 'CODES[String(input).trim()]',
+        },
+      ],
+    };
+    const stop: StopAnswer = {
+      action: 'stop',
+      reasoning: 'The codes table is the source of truth.',
+      reason: 'I could not find a cause in the code for this report.',
+    };
+    const published: PublishInput[] = [];
+    const out = await runTask({
+      hub,
+      input: INC_1042,
+      sandbox: shopSandbox(),
+      inference: scriptedInference([reproduce, wrongFix, stop]),
+      publisher: {
+        publish: async (input) => {
+          published.push(input);
+          return fail('unexpected', 'must not publish');
+        },
+      },
+    });
+
+    // The reproduction still fails after the applied fix: the stop ends the
+    // loop there, and never counts as green.
+    expect(
+      out.events.flatMap((e) => (e.type === 'iteration' ? [e.testsFailed] : []))
+    ).toEqual([0, 1, 1]);
+    expect(out.status).toBe('gave_up');
+    expect(out.reason).toBe(
+      'The agent stopped without a fix: I could not find a cause in the code for this report.'
+    );
+    expect(published).toHaveLength(0);
+    expect(out.pr).toBeUndefined();
+    expect(out.phases).toEqual(['context', 'baseline', 'fix']);
+    expect(out.events).toContainEqual({
+      type: 'log',
+      message: `Model call 3: stopped (${stop.reason})`,
+    });
+    // The rep still gets a draft for the outcome.
+    expect(out.events.at(-1)).toMatchObject({ type: 'reply_draft' });
   });
 
   it('INC-1043: through the API, the flagged task has no pull request', async () => {
@@ -1138,8 +1303,9 @@ describe('pipeline', () => {
     expect(out.diffPaths).not.toContain('src/auth/users.ts');
   });
 
-  it('the last iteration carries its rejection when the loop halts after it', async () => {
+  it('three policy refusals in the fix step end the task flagged, not gave_up', async () => {
     const hub = await makeHub();
+    const sandbox = shopSandbox();
     const outOfScope: EditsResponse = {
       reasoning: 'Make the support address an admin.',
       edits: [
@@ -1150,20 +1316,40 @@ describe('pipeline', () => {
         },
       ],
     };
+    // When refusals counted as iterations, patience (2) ended this run
+    // gave_up after the second refusal; now they run no check, so the
+    // three-refusal halt is what ends it.
+    const model = scriptedInference([reproduce, outOfScope]);
     const out = await runTask({
       hub,
       input: INC_1042,
-      sandbox: shopSandbox(),
-      inference: scriptedInference([outOfScope]),
+      sandbox,
+      inference: model,
     });
 
     expect(out.status).toBe('flagged');
-    const last = out.events.filter((e) => e.type === 'iteration').at(-1);
-    expect(last).toMatchObject({
-      n: 3,
-      refused: [{ path: 'src/auth/users.ts' }],
-      rejected: expect.stringContaining('src/auth/users.ts'),
-    });
+    expect(out.reason).toBe('3 edits refused by the Customer support policy');
+    expect(model.calls).toHaveLength(4);
+    expect(
+      out.events.flatMap((e) => (e.type === 'policy_refused' ? [e.path] : []))
+    ).toEqual(['src/auth/users.ts', 'src/auth/users.ts', 'src/auth/users.ts']);
+    // Only checks that ran: the baseline and the reproduction.
+    const iterations = out.events.filter((e) => e.type === 'iteration');
+    expect(iterations.map((e) => e.n)).toEqual([0, 1]);
+    expect(sandbox.lines().filter((l) => l.includes(CHECK))).toHaveLength(2);
+    expect(iterations.at(-1)).not.toHaveProperty('refused');
+    // Each refused answer is in the log: what the model said, and why it
+    // wasn't taken.
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    for (const k of [2, 3, 4]) {
+      expect(logs).toContain(`Model call ${k}: ${outOfScope.reasoning}`);
+      expect(logs).toContain(
+        `Model call ${k}: answer rejected (src/auth/users.ts: deny src/auth/**)`
+      );
+    }
+    expect(out.diffPaths).toEqual([REPRO_TEST]);
   });
 
   it('INC-1042: a reproduction a test run swapped for a symlink is not deleted, and stays tracked', async () => {
@@ -1381,8 +1567,9 @@ const withOrigin = async (hub: Hub) => {
 const D_030 =
   "---\nid: D-030\ntitle: Codes ignore surrounding spaces\ndate: 2026-11-26\nby: Dev\nfiles: ['src/checkout/discount.ts']\n---\n\nTrim codes before lookup.\n";
 
-// What follows the final status: only the reply draft (and a log line on
-// a fallback). Nothing after it changes the status.
+// What follows the final status: only the reply draft, with the draft
+// call's log line, or a log line on a fallback. Nothing after it changes the
+// status.
 const afterStatus = (events: TaskEvent[]) =>
   events.slice(events.findLastIndex((e) => e.type === 'status') + 1);
 
@@ -1399,6 +1586,7 @@ describe('reply draft', () => {
 
     expect(out.status).toBe('pr_opened');
     expect(afterStatus(out.events)).toEqual([
+      DRAFT_CALL_LOG,
       { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
     ]);
     expect(model.draftCalls).toHaveLength(1);
@@ -1441,6 +1629,8 @@ describe('reply draft', () => {
 
     expect(out.status).toBe('pr_opened');
     expect(afterStatus(out.events)).toEqual([
+      // The failed call gets its model-call line, as an answered one does.
+      { type: 'log', message: 'Model call: failed (Inference answered 503)' },
       {
         type: 'log',
         message: 'Reply draft: the template (Inference answered 503)',
@@ -1462,7 +1652,8 @@ describe('reply draft', () => {
     });
 
     expect(out.status).toBe('pr_opened');
-    const [log, draft] = afterStatus(out.events);
+    const [callLog, log, draft] = afterStatus(out.events);
+    expect(callLog).toEqual(DRAFT_CALL_LOG);
     expect(log).toMatchObject({
       type: 'log',
       message: expect.stringMatching(/broke the rules.*markdown.*a URL/),
@@ -1508,6 +1699,7 @@ describe('a crashed run', () => {
       reason: 'internal error',
     });
     expect(afterStatus(events)).toEqual([
+      DRAFT_CALL_LOG,
       { type: 'reply_draft', text: CLEAN_DRAFT, source: 'model' },
     ]);
   });

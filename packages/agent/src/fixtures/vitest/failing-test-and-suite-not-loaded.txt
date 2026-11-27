@@ -1,0 +1,47 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ src/broken.test.ts (0 test)
+ ❯ src/price.test.ts (2 tests | 1 failed) 8ms
+   × applies the discount 5ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/broken.test.ts [ src/broken.test.ts ]
+Error: Cannot find module './missing.ts' imported from /work/src/broken.test.ts
+ ❯ src/broken.test.ts:2:1
+      1| import { expect, it } from 'vitest';
+      2| import { price } from './missing.ts';
+       | ^
+      3| it('formats cents', () => { expect(price(1999)).toBe(19.99); });
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/price.test.ts > applies the discount
+AssertionError: expected 9 to be 8 // Object.is equality
+
+- Expected
++ Received
+
+- 8
++ 9
+
+ ❯ src/price.test.ts:4:62
+      2| const price = (c: number) => c / 100;
+      3| it('formats cents', () => { expect(price(1999)).toBe(19.99); });
+      4| it('applies the discount', () => { expect(price(1000) * 0.9).toBe(8); …
+       |                                                              ^
+      5|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  1 failed | 1 passed (2)
+   Start at  14:49:58
+   Duration  169ms (transform 34ms, setup 0ms, import 30ms, tests 8ms, environment 0ms)
+

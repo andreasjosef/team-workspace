@@ -3,12 +3,14 @@ import {
   buildTaskMessages,
   checkCommand,
   checkPolicy,
+  describeCompletion,
   draftReply,
   filesFromErrors,
   isCreate,
+  isStop,
   isTestPath,
   matchDecisions,
-  parseEditsResponse,
+  parseAnswer,
   promptSections,
   flaggedReason,
   rankFiles,
@@ -120,9 +122,6 @@ const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 const MAX_PROMPT_SECTION_CHARS = 4000;
 const MAX_REASONING_CHARS = 2000;
 const MAX_REJECTION_CHARS = 1000;
-// The loop's own note for an answer it didn't take (fixLoop.ts).
-const REJECTION_NOTE =
-  /^Iteration \d+: (?:answer rejected|patch refused) \((.*)\)$/s;
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
@@ -174,6 +173,24 @@ export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   },
 });
 
+// Each model call leaves one log line: why the reply ended and what it cost
+// (`finish_reason`, token usage). A failed call's line carries its message,
+// which for an empty reply names the finish_reason and the usage.
+const withCallLog = (
+  inference: Inference,
+  log: (message: string) => void
+): Inference => ({
+  complete: async (messages) => {
+    const reply = await inference.complete(messages);
+    log(
+      reply.success
+        ? describeCompletion(reply.value)
+        : `Model call: failed (${reply.message})`
+    );
+    return reply;
+  },
+});
+
 // The reply the support rep can send, drafted once the status is final: one
 // more model call for the outcomes a model may describe, the template for
 // the rest and for any draft that fails its rules. It never changes the
@@ -188,8 +205,14 @@ const emitReplyDraft = async (
     fixture?: boolean;
   }
 ) => {
+  // A call that answers after the draft timed out logs nothing: the task's
+  // stream has moved on.
+  let open = true;
+  const inference = withCallLog(deps.inference, (message) => {
+    if (open) emit({ type: 'log', message });
+  });
   const { draft, fallback } = await draftReply(
-    deps.inference,
+    inference,
     {
       ...facts,
       title: input.title,
@@ -197,7 +220,9 @@ const emitReplyDraft = async (
       ...(input.incidentId ? { incidentId: input.incidentId } : {}),
     },
     deps.draftTimeoutMs === undefined ? {} : { timeoutMs: deps.draftTimeoutMs }
-  );
+  ).finally(() => {
+    open = false;
+  });
   if (fallback)
     emit({ type: 'log', message: `Reply draft: the template (${fallback})` });
   emit({ type: 'reply_draft', ...draft });
@@ -216,7 +241,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   const text = `${input.title}\n${input.text}`;
   // A fixture run is driven by the scripted hostile proposal, not the model;
   // everything else below is the same pipeline.
-  const inference = task.fixtureOf ? fixtureInference() : deps.inference;
+  const inference = task.fixtureOf
+    ? fixtureInference()
+    : withCallLog(deps.inference, (message) => emit({ type: 'log', message }));
 
   const run = async (
     cmd: string[],
@@ -429,8 +456,9 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   let refusals = 0;
   const touched = new Set<string>();
   // Recorded for the Agent tab, never read back by the loop: the prompt of
-  // the first call, and what the model answered in the iteration under way,
-  // which goes out with that iteration's check.
+  // the first call, and what the model answered on the call under way,
+  // which goes out with that call's check if it gets one. A call refused
+  // before the sandbox gets no check; the next call starts afresh.
   let promptRecorded = false;
   let answer: IterationAnswer = {};
   const checkRoleScope = (edits: Edit[]): Result<null> => {
@@ -470,6 +498,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
           ? `${refusals} edits refused by the ${policy.label} policy`
           : null,
     propose: async ({ latest, lastRejection, step, reproduction }) => {
+      answer = {};
       const paths = [
         ...new Set([
           ...contextFiles,
@@ -503,10 +532,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       }
       const reply = await inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
-      const parsed = parseEditsResponse(reply.value);
+      const parsed = parseAnswer(reply.value.content);
       if (parsed.success && parsed.value.reasoning)
         reasoning.push(parsed.value.reasoning);
-      if (parsed.success)
+      // A stop has no edits, and ends the loop before any check: its reason
+      // goes out in the loop's note and the status.
+      if (parsed.success && !isStop(parsed.value))
         answer = {
           ...(parsed.value.reasoning
             ? { reasoning: head(parsed.value.reasoning, MAX_REASONING_CHARS) }
@@ -534,22 +565,21 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       });
       return ok(null);
     },
-    onIteration: (n, c) => {
+    // `rejected`: the check ran, then its answer was not taken (a
+    // reproduction that didn't fail). An answer refused before the sandbox
+    // has no iteration: its notes and refusals stay log and
+    // `policy_refused` events.
+    onIteration: (n, c, rejected) => {
       emit({
         type: 'iteration',
         n,
         typeErrors: c.typeErrors,
         testsFailed: c.testsFailed,
         ...answer,
+        ...(rejected ? { rejected: head(rejected, MAX_REJECTION_CHARS) } : {}),
       });
-      answer = {};
     },
-    onNote: (message) => {
-      const rejected = REJECTION_NOTE.exec(message);
-      if (rejected?.[1])
-        answer.rejected = head(rejected[1], MAX_REJECTION_CHARS);
-      emit({ type: 'log', message });
-    },
+    onNote: (message) => emit({ type: 'log', message }),
   });
 
   const diff = await diffPaths(ws, [...touched]);
@@ -568,6 +598,17 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   }
   if (outcome.status === 'gave_up') {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
+    return;
+  }
+  // The model chose not to change anything. No pull request, whatever was
+  // applied before; the reason (model output, capped by the loop) tells the
+  // support rep why. Spec 3 splits this into its own outcomes.
+  if (outcome.status === 'stopped') {
+    emit({
+      type: 'status',
+      status: 'gave_up',
+      reason: `The agent stopped without a fix: ${outcome.reason}`,
+    });
     return;
   }
   const receipt = buildPrBody({
