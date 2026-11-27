@@ -7,7 +7,11 @@ import { replyDraftLabel } from '../taskView.ts';
 // anything. Shown as plain text in a text box, never rendered.
 export const ReplyDraftBox = ({ task }: { task: TaskSnapshot }) => {
   const draft = task.replyDraft;
-  if (!draft) return null;
+  if (!draft) {
+    return (
+      <p className="empty">The reply draft appears once the task finishes.</p>
+    );
+  }
   // A new draft starts a fresh box; edits to the old one don't carry over.
   return (
     <Editor key={draft.text} text={draft.text} label={replyDraftLabel(draft)} />

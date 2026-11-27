@@ -1,8 +1,16 @@
+import type { EventEnvelope } from '@app/shared';
 import { useEffect, useRef } from 'react';
-import { useTaskEvents } from '../useTaskEvents.ts';
+import { useTaskEvents } from '../hooks/useTaskEvents.ts';
 
-export const LiveLog = ({ taskId }: { taskId: string }) => {
-  const events = useTaskEvents(taskId);
+export const LiveLog = ({
+  taskId,
+  events: providedEvents,
+}: {
+  taskId: string;
+  events?: EventEnvelope[];
+}) => {
+  const subscribed = useTaskEvents(providedEvents ? '' : taskId);
+  const events = providedEvents ?? subscribed;
   // Follow new lines inside the log box (never the page), and only while
   // the reader is at the bottom: scrolling up to read stops the follow.
   const box = useRef<HTMLDivElement>(null);

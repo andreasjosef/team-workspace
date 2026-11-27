@@ -1,19 +1,18 @@
 import type { EventEnvelope, TaskSnapshot } from '@app/shared';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   clock,
   elapsed,
-  liveStages,
   outcome,
   threadEvents,
-  type Stage,
+  type ThreadEvent,
 } from '../taskView.ts';
-import { useTaskEvents } from '../useTaskEvents.ts';
 import { ReplyDraftBox } from './ReplyDraft.tsx';
 
 // The Conversation view: the exchange with the customer as one thread, in
 // order. Their message (untrusted, shown as data), the milestones of the
-// agent's run as quiet timeline lines, a live box while the hub works, then
+// agent's run as quiet timeline lines, the live pipeline while the hub
+// works, then
 // the outcome in plain words and our reply. Before the report is
 // forwarded, the forward button sits where the reply goes.
 
@@ -23,6 +22,8 @@ export const Conversation = ({
   at,
   text,
   task,
+  events,
+  live,
   onOpenAgent,
   forward,
 }: {
@@ -31,6 +32,8 @@ export const Conversation = ({
   at: string | null;
   text: string;
   task: TaskSnapshot | undefined;
+  events: EventEnvelope[];
+  live: ReactNode;
   onOpenAgent: () => void;
   forward?: ReactNode;
 }) => (
@@ -44,107 +47,79 @@ export const Conversation = ({
       <p className="untrusted bubble-text">{text}</p>
     </li>
     {task ? (
-      <TaskThread key={task.id} task={task} onOpenAgent={onOpenAgent} />
+      <TaskThread
+        task={task}
+        events={events}
+        live={live}
+        onOpenAgent={onOpenAgent}
+      />
     ) : (
       forward && <li className="thread-compose">{forward}</li>
     )}
   </ol>
 );
 
-// Ticks once a second while `on`, so elapsed times move.
-const useNow = (on: boolean) => {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [on]);
-  return now;
+// The run's milestones, folded to one row of fixed height: the latest one,
+// its time and how many there are. A live run only changes that row, so
+// the thread doesn't grow line by line. Opens to the full list.
+const Timeline = ({ items }: { items: ThreadEvent[] }) => {
+  const [open, setOpen] = useState(false);
+  const last = items[items.length - 1];
+  if (!last) return null;
+  return (
+    <li className="timeline">
+      <button
+        className="t-event t-summary"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className={`t-dot tone-${last.tone}`} aria-hidden="true" />
+        <span className="t-text">{open ? 'Timeline' : last.text}</span>
+        <span className="t-count">
+          {items.length} event{items.length === 1 ? '' : 's'} {open ? '▾' : '▸'}
+        </span>
+        <span className="t-time">{clock(last.at)}</span>
+      </button>
+      {open && (
+        <ol className="t-list">
+          {items.map((e) => (
+            <li key={e.seq} className="t-event">
+              <span className={`t-dot tone-${e.tone}`} aria-hidden="true" />
+              <span className="t-text">{e.text}</span>
+              <span className="t-time">{clock(e.at)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </li>
+  );
 };
 
 const TaskThread = ({
   task,
+  events,
+  live,
   onOpenAgent,
 }: {
   task: TaskSnapshot;
-  onOpenAgent: () => void;
-}) => {
-  const events = useTaskEvents(task.id);
-  const live = task.status === 'queued' || task.status === 'working';
-  const now = useNow(live);
-  return (
-    <>
-      {threadEvents(events).map((e) => (
-        <li key={e.seq} className="t-event">
-          <span className={`t-dot tone-${e.tone}`} aria-hidden="true" />
-          <span className="t-text">{e.text}</span>
-          <span className="t-time">{clock(e.at)}</span>
-        </li>
-      ))}
-      {live ? (
-        <LiveBox stages={liveStages(events, true)} events={events} now={now} />
-      ) : (
-        <AgentNote task={task} events={events} onOpenAgent={onOpenAgent} />
-      )}
-      {task.replyDraft && (
-        <li className="bubble bubble-out">
-          <ReplyDraftBox task={task} />
-        </li>
-      )}
-    </>
-  );
-};
-
-const stageMark: Record<Stage['state'], string> = {
-  done: '✓',
-  current: '',
-  todo: '',
-  stopped: '✕',
-};
-
-// What the hub is doing right now: its four stages, the one under way with
-// a pulse, its elapsed time and the last thing it ran.
-const LiveBox = ({
-  stages,
-  events,
-  now,
-}: {
-  stages: Stage[];
   events: EventEnvelope[];
-  now: number;
-}) => {
-  const first = events[0];
-  return (
-    <li className="card live" aria-live="polite">
-      <div className="card-label">
-        <span className="pulse" aria-hidden="true" />
-        Agent at work
-        {first && (
-          <span className="card-label-end">{elapsed(first.at, now)}</span>
-        )}
-      </div>
-      <ol className="stages">
-        {stages.map((s) => (
-          <li key={s.id} className={`stage stage-${s.state}`}>
-            <span className="stage-mark" aria-hidden="true">
-              {stageMark[s.state]}
-            </span>
-            <span className="stage-label">{s.label}</span>
-            <span className="stage-time">
-              {s.startedAt &&
-                (s.state === 'current'
-                  ? elapsed(s.startedAt, now)
-                  : s.endedAt && elapsed(s.startedAt, Date.parse(s.endedAt)))}
-            </span>
-            {s.state === 'current' && s.latest && (
-              <code className="stage-latest">{s.latest}</code>
-            )}
-          </li>
-        ))}
-      </ol>
-    </li>
-  );
-};
+  live: ReactNode;
+  onOpenAgent: () => void;
+}) => (
+  <>
+    <Timeline items={threadEvents(events)} />
+    {task.status === 'queued' || task.status === 'working' ? (
+      <li className="thread-live">{live}</li>
+    ) : (
+      <AgentNote task={task} events={events} onOpenAgent={onOpenAgent} />
+    )}
+    {task.replyDraft && (
+      <li className="bubble bubble-out">
+        <ReplyDraftBox task={task} />
+      </li>
+    )}
+  </>
+);
 
 // Where the run ended, in the rep's words. The working is on the Agent view.
 const AgentNote = ({

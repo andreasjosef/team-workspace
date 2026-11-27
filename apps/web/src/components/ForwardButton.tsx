@@ -4,7 +4,13 @@ import { api, unwrap } from '../api.ts';
 
 // One button from a customer's report to an agent working on it. The report
 // goes in exactly as the customer wrote it; the hub treats it as untrusted.
-export const ForwardButton = ({ report }: { report: Incident }) => {
+export const ForwardButton = ({
+  report,
+  onStarted,
+}: {
+  report: Incident;
+  onStarted?: (taskId: string) => void;
+}) => {
   const client = useQueryClient();
   const forward = useMutation({
     mutationFn: async () =>
@@ -17,7 +23,10 @@ export const ForwardButton = ({ report }: { report: Incident }) => {
           incidentId: report.id,
         })
       ),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ['tasks'] }),
+    onSuccess: (created) => {
+      onStarted?.(created.taskId);
+      void client.invalidateQueries({ queryKey: ['tasks'] });
+    },
   });
 
   return (

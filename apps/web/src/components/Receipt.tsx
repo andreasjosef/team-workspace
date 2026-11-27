@@ -1,4 +1,4 @@
-import type { RoleSummary, TaskSnapshot } from '@app/shared';
+import type { EventEnvelope, RoleSummary, TaskSnapshot } from '@app/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -205,7 +205,13 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
 
 type Tab = 'changes' | 'run' | 'containment' | 'log';
 
-export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
+export const ReceiptTabs = ({
+  task,
+  events,
+}: {
+  task: TaskSnapshot;
+  events?: EventEnvelope[];
+}) => {
   const [picked, setPicked] = useState<Tab | null>(null);
   const diff = useDiff(task.id, task.hasDiff, task.status);
   const flagged =
@@ -251,7 +257,9 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
         {tab === 'changes' && <DiffView diff={diff.data ?? ''} />}
         {tab === 'run' && <RunView task={task} />}
         {tab === 'containment' && <ContainmentView task={task} />}
-        {tab === 'log' && <LiveLog key={task.id} taskId={task.id} />}
+        {tab === 'log' && (
+          <LiveLog key={task.id} taskId={task.id} events={events} />
+        )}
       </div>
     </section>
   );

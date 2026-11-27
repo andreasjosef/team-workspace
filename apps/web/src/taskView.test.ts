@@ -2,7 +2,6 @@ import type { EventEnvelope, TaskEvent, TaskSnapshot } from '@app/shared';
 import { describe, expect, it } from 'vitest';
 import {
   fixtureLayers,
-  liveStages,
   NETWORK_LAYER,
   outcome,
   progress,
@@ -312,46 +311,5 @@ describe('threadEvents', () => {
       { type: 'iteration', n: 1, typeErrors: 0, testsFailed: 0, rejected: 'x' }
     );
     expect(threadEvents(events)).toHaveLength(1);
-  });
-});
-
-describe('liveStages', () => {
-  const states = (events: EventEnvelope[], live: boolean) =>
-    liveStages(events, live).map((s) => s.state);
-
-  it('marks the stage under way and the ones before it', () => {
-    const events = stream(
-      { type: 'phase', phase: 'context' },
-      { type: 'phase', phase: 'baseline' },
-      {
-        type: 'command',
-        cmd: 'pnpm test',
-        exitCode: 0,
-        durationMs: 1200,
-        output: '',
-      }
-    );
-    expect(states(events, true)).toEqual(['done', 'current', 'todo', 'todo']);
-    expect(liveStages(events, true)[1]!.latest).toBe(
-      '$ pnpm test · exit 0 · 1.2s'
-    );
-  });
-
-  it('shows where an ended run stopped', () => {
-    const events = stream(
-      { type: 'phase', phase: 'context' },
-      { type: 'phase', phase: 'fix' },
-      { type: 'status', status: 'gave_up' }
-    );
-    expect(states(events, false)).toEqual(['done', 'done', 'stopped', 'todo']);
-  });
-
-  it('finishes the last stage of a published run', () => {
-    const events = stream(
-      { type: 'phase', phase: 'context' },
-      { type: 'phase', phase: 'preview' },
-      { type: 'status', status: 'pr_opened' }
-    );
-    expect(states(events, false)).toEqual(['done', 'done', 'done', 'done']);
   });
 });

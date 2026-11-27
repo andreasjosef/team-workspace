@@ -6,22 +6,23 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces */
+  /* Surfaces: warm and flat, each lift one small step up */
   --bg: #131311;
-  --bg-mid: #1c1c1a; /* sidebars, code blocks */
-  --bg-soft: #262626; /* floats, menus, borders, hovered rows */
-  --bg-hover: #3a3935; /* hovered row inside a bg-soft surface */
+  --bg-mid: #1c1c1a; /* cards, sidebars, code blocks */
+  --bg-soft: #262624; /* nested cards, chips, buttons, hovered cards */
+  --bg-hover: #33322e; /* selected cards, hovered controls */
 
-  /* Text */
-  --faint: #505050;
+  /* Text: one warm family, louder only where it leads */
+  --faint: #5a5650;
   --muted: #928374;
   --text: #d4c9af; /* all text, from bitverkstad.css */
+  --text-strong: #ebdbb2; /* titles and headlines */
 
   /* Accent and meaning */
   --gold: #d79921; /* the accent: active, selected, focused; warnings */
   --red: #ea6962; /* errors, danger */
   --green: #a9b665; /* success, additions */
-  --blue: #7daea3; /* links, info */
+  --blue: #7daea3; /* links, info, in progress */
   --purple: #d3869b; /* constants, special */
   --cyan: #89b482; /* hints */
 
@@ -36,11 +37,13 @@
   --line-height: 1.6;
   --unit: calc(1rem * var(--line-height)); /* one line of body text */
 
-  --radius: 6px;
+  --radius: 8px;
+  --radius-sm: 6px;
 }
 
 /* Base */
-html {
+html,
+body {
   background: var(--bg);
   color: var(--text);
 }
@@ -94,10 +97,6 @@ h3 {
   font-weight: 650;
   margin-top: calc(var(--unit) * 1.25);
 }
-:is(h1, h2) {
-  border-bottom: 1px solid var(--bg-soft);
-  padding-bottom: 0.2em;
-}
 
 /* Code: terminal font and spacing; blocks scroll rather than wrap */
 code,
@@ -115,9 +114,9 @@ pre {
   overflow-x: auto;
 }
 :not(pre) > code {
-  background: var(--bg-mid);
+  background: var(--bg-soft);
   padding: 0.1em 0.35em;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 mark {
   background: var(--highlight);
@@ -126,5 +125,6 @@ mark {
 
 hr {
   border: 0;
-  border-top: 1px solid var(--bg-soft);
+  height: 0;
+  margin: var(--unit) 0;
 }
