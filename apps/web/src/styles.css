@@ -312,12 +312,11 @@ table.iters th {
 .outcome-blue {
   border-left-color: var(--blue);
 }
-.outcome-link:hover {
-  background: var(--bg-soft);
-  color: var(--text);
-}
-.outcome-link > span {
-  display: block;
+.outcome-pr {
+  display: inline-block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0 0 0.6rem;
 }
 .outcome-headline {
   font-size: 1.25rem;

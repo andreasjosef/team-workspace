@@ -109,6 +109,8 @@ Decisions are markdown files in `decisions/` with front matter (`id`, `title`, `
 | What gets published | Only a green task's diff, on its own branch. `checkPatch` re-checks every path against the role, and refuses symlinks, binary patches and mode changes. `git apply` runs in a fresh worktree of the hub repo, never on `main`  | `pipeline.ts`, `publishBranch` in `workspace.ts` |
 | Audit               | Every command, edit, refusal, block, pull request and status change is an event on the task's stream                                                                                                                           | `TaskEvent` in `packages/shared`                 |
 
+The receipt's Containment tab reads four of these layers off the task's events: the input scanner, the role policy, the `.hub/` lock and the network (`taskLayers` in `apps/web/src/taskView.ts`). On a flagged task it also shows its fixture run, layer by layer. The fixture's call to the collector is stopped by the Network row's `--network none` (no route out), not by the egress proxy, which only governs installs.
+
 ## Dependency cache
 
 A task with a `package-lock.json` doesn't install into its worktree. The hub hashes the lockfile (SHA-256) and looks for `DEPS_CACHE_DIR/<hash>`:
