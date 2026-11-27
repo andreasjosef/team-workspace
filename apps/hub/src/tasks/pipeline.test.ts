@@ -597,12 +597,12 @@ describe('pipeline', () => {
     });
 
     expect(out.status).toBe('pr_opened');
-    // The rejected answer used an iteration with the counts unchanged and no
-    // check; then red, then green.
+    // The rejected answer ran no check and gets no iteration: the baseline,
+    // then red, then green.
     const curve = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e.testsFailed] : []
     );
-    expect(curve).toEqual([0, 0, 1, 0]);
+    expect(curve).toEqual([0, 1, 0]);
     expect(sandbox.lines().filter((l) => l.includes(CHECK))).toHaveLength(3);
     // Each prompt names its step; the step after a rejection says why.
     const user = (i: number) => model.calls[i]![1]!.content;
@@ -677,31 +677,39 @@ describe('pipeline', () => {
     for (const s of prompt!.sections.filter((s) => s.text.length === s.chars))
       expect(`${sent![0]!.content}\n${sent![1]!.content}`).toContain(s.text);
 
-    // Each iteration carries what the model answered; a rejected answer
-    // says why. The baseline carries none.
+    // Each iteration carries what the model answered on the call it
+    // checked. The baseline carries none.
     const iterations = out.events.flatMap((e) =>
       e.type === 'iteration' ? [e] : []
     );
+    expect(iterations).toHaveLength(3);
     expect(iterations[0]).toEqual({
       type: 'iteration',
       n: 0,
       typeErrors: 0,
       testsFailed: 0,
     });
-    expect(iterations[1]).toMatchObject({
-      reasoning: together.reasoning,
-      proposed: [
-        { path: REPRO_TEST, create: true },
-        { path: 'src/checkout/discount.ts', create: false },
-      ],
-      rejected: expect.stringContaining('may add only new test files'),
-    });
-    expect(iterations[2]).toMatchObject({
+    expect(iterations[1]).toEqual({
+      type: 'iteration',
+      n: 1,
+      typeErrors: 0,
+      testsFailed: 1,
       reasoning: reproduce.reasoning,
       proposed: [{ path: REPRO_TEST, create: true }],
     });
+    expect(iterations[2]).toMatchObject({ n: 2, reasoning: fix.reasoning });
     expect(iterations[2]).not.toHaveProperty('rejected');
-    expect(iterations[3]).toMatchObject({ reasoning: fix.reasoning });
+    // The rejected answer ran no check, so it has no iteration: what the
+    // model said and why it wasn't taken stay in the log.
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    expect(logs).toContain(`Model call 1: ${together.reasoning}`);
+    expect(logs).toContainEqual(
+      expect.stringMatching(
+        /^Model call 1: answer rejected \(.*may add only new test files.*src\/checkout\/discount\.ts/s
+      )
+    );
   });
 
   it('INC-1042: a reproduction that passes is discarded and never reaches the diff', async () => {
@@ -1061,15 +1069,20 @@ describe('pipeline', () => {
     );
     expect(refused).toContain('src/auth/users.ts');
     expect(refused).toContain('.hub/roles/cs.json');
-    // The Agent tab shows the refusals on the iteration that proposed them.
-    const first = out.events.find((e) => e.type === 'iteration' && e.n === 1);
-    expect(first).toMatchObject({
-      reasoning: 'Checkout needs the ops account.',
-      refused: expect.arrayContaining([
-        expect.objectContaining({ path: 'src/auth/users.ts' }),
-        expect.objectContaining({ path: '.hub/roles/cs.json' }),
-      ]),
-    });
+    // A refused answer runs no check, so it has no iteration: the Agent
+    // tab's log shows what the model said and the refusals.
+    expect(
+      out.events.filter((e) => e.type === 'iteration').map((e) => e.n)
+    ).toEqual([0]);
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    expect(logs).toContain('Model call 1: Checkout needs the ops account.');
+    expect(logs).toContainEqual(
+      expect.stringMatching(
+        /^Model call 1: answer rejected \(src\/auth\/users\.ts: .*\.hub\/roles\/cs\.json/
+      )
+    );
     for (const path of refused) expect(out.diff).not.toContain(path);
   });
 
@@ -1091,7 +1104,12 @@ describe('pipeline', () => {
 
     expect(out.events.some((e) => e.type === 'input_flagged')).toBe(false);
     expect(out.status).toBe('gave_up');
-    expect(out.reason).toMatch(/^error count stopped falling/);
+    // The empty answers are rejected before the sandbox, so they run no
+    // check and leave patience alone: the model-call cap ends the run.
+    expect(out.reason).toBe('reached the cap of 10 model calls');
+    expect(
+      out.events.filter((e) => e.type === 'iteration').map((e) => e.n)
+    ).toEqual([0, 1]);
   });
 
   it('INC-1043: through the API, the flagged task has no pull request', async () => {
@@ -1225,8 +1243,9 @@ describe('pipeline', () => {
     expect(out.diffPaths).not.toContain('src/auth/users.ts');
   });
 
-  it('the last iteration carries its rejection when the loop halts after it', async () => {
+  it('three policy refusals in the fix step end the task flagged, not gave_up', async () => {
     const hub = await makeHub();
+    const sandbox = shopSandbox();
     const outOfScope: EditsResponse = {
       reasoning: 'Make the support address an admin.',
       edits: [
@@ -1237,20 +1256,40 @@ describe('pipeline', () => {
         },
       ],
     };
+    // When refusals counted as iterations, patience (2) ended this run
+    // gave_up after the second refusal; now they run no check, so the
+    // three-refusal halt is what ends it.
+    const model = scriptedInference([reproduce, outOfScope]);
     const out = await runTask({
       hub,
       input: INC_1042,
-      sandbox: shopSandbox(),
-      inference: scriptedInference([outOfScope]),
+      sandbox,
+      inference: model,
     });
 
     expect(out.status).toBe('flagged');
-    const last = out.events.filter((e) => e.type === 'iteration').at(-1);
-    expect(last).toMatchObject({
-      n: 3,
-      refused: [{ path: 'src/auth/users.ts' }],
-      rejected: expect.stringContaining('src/auth/users.ts'),
-    });
+    expect(out.reason).toBe('3 edits refused by the Customer support policy');
+    expect(model.calls).toHaveLength(4);
+    expect(
+      out.events.flatMap((e) => (e.type === 'policy_refused' ? [e.path] : []))
+    ).toEqual(['src/auth/users.ts', 'src/auth/users.ts', 'src/auth/users.ts']);
+    // Only checks that ran: the baseline and the reproduction.
+    const iterations = out.events.filter((e) => e.type === 'iteration');
+    expect(iterations.map((e) => e.n)).toEqual([0, 1]);
+    expect(sandbox.lines().filter((l) => l.includes(CHECK))).toHaveLength(2);
+    expect(iterations.at(-1)).not.toHaveProperty('refused');
+    // Each refused answer is in the log: what the model said, and why it
+    // wasn't taken.
+    const logs = out.events.flatMap((e) =>
+      e.type === 'log' ? [e.message] : []
+    );
+    for (const k of [2, 3, 4]) {
+      expect(logs).toContain(`Model call ${k}: ${outOfScope.reasoning}`);
+      expect(logs).toContain(
+        `Model call ${k}: answer rejected (src/auth/users.ts: deny src/auth/**)`
+      );
+    }
+    expect(out.diffPaths).toEqual([REPRO_TEST]);
   });
 
   it('INC-1042: a reproduction a test run swapped for a symlink is not deleted, and stays tracked', async () => {

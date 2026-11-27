@@ -1,10 +1,21 @@
 import type { CheckCounts } from './checks.ts';
 
 // The spec's stop rules, as one pure function: green, or the error count
-// stopped falling for `patience` iterations, or the iteration cap.
+// stopped falling for `patience` iterations, or the iteration cap. An
+// iteration is a check that ran in the sandbox. `maxModelCalls` caps every
+// model call, rejected answers included; the fix loop applies it, since a
+// rejected answer never reaches the history this function reads.
 
-export type StopRules = { maxIterations: number; patience: number };
-export const defaultStopRules: StopRules = { maxIterations: 6, patience: 2 };
+export type StopRules = {
+  maxIterations: number;
+  patience: number;
+  maxModelCalls: number;
+};
+export const defaultStopRules: StopRules = {
+  maxIterations: 6,
+  patience: 2,
+  maxModelCalls: 10,
+};
 
 export type Decision =
   { stop: false } | { stop: true; status: 'green' | 'gave_up'; reason: string };
@@ -21,7 +32,7 @@ export const isGreen = (now: CheckCounts, baseline: CheckCounts) =>
 export const decide = (
   history: CheckCounts[],
   baseline: CheckCounts,
-  rules: StopRules = defaultStopRules
+  rules: Pick<StopRules, 'maxIterations' | 'patience'> = defaultStopRules
 ): Decision => {
   const last = history.at(-1);
   if (!last) return { stop: false };
