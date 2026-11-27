@@ -48,7 +48,7 @@ Files: `packages/agent/src/fixLoop.ts`, `stop.ts`, `checks.ts`, `edits.ts`, `pro
 
 When the input scanner flags a report (`signals.length > 0`), the pipeline still installs dependencies, runs the baseline in a sandbox and runs the reproduce/fix loop. Then it ends `flagged` anyway: the decision is made on host facts after the loop. That costs sandbox time and model calls, and gives the model a reproduce step it can only satisfy by inventing a bug (INC-1043).
 
-**Agreed:** a flagged report ends `flagged` before the baseline phase: no sandbox, no model call. The fixture run ("what if the model obeyed?") is the exception: it needs the loop to show the layers stopping a hostile proposal. Tracked in #40.
+**Agreed:** a flagged report ends `flagged` before the baseline phase: no sandbox, no model call. The fixture run ("what if the model obeyed?") is the exception: it needs the loop to show the layers stopping a hostile proposal. Done in #40, which also scans the title with the text.
 
 ## Order
 

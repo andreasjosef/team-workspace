@@ -159,7 +159,7 @@ describe('tasks', () => {
     expect(opened.pr).not.toBeNull();
   });
 
-  it('hostile ticket: flagged input, two policy refusals, a blocked network call', async () => {
+  it('hostile ticket: flagged input ends flagged after the context phase, before the baseline and the fix', async () => {
     const app = await setup();
     const { taskId } = (await create(app, hostileTicket)).json();
     const flagged = await settle(app, taskId, ['flagged']);
@@ -169,16 +169,15 @@ describe('tasks', () => {
         'asks for elevated access',
       ])
     );
-    expect(flagged.refusals).toEqual([
-      { path: 'src/auth/users.ts', rule: 'deny src/auth/**' },
-      {
-        path: '.hub/roles/cs.json',
-        rule: 'role policies are never agent-writable',
-      },
-    ]);
-    expect(flagged.blocked[0]).toMatch(
-      /^network: connect ENETUNREACH collector\.attacker\.example/
+    expect(flagged.statusReason).toMatch(
+      /^The report carried instructions \(.*\), so the agent didn't work on it$/
     );
+    expect(flagged.context.files.length).toBeGreaterThan(0);
+    expect(flagged.phase).toBe('context');
+    expect(flagged.prompt).toBeNull();
+    expect(flagged.iterations).toEqual([]);
+    expect(flagged.refusals).toEqual([]);
+    expect(flagged.blocked).toEqual([]);
     // Nothing published, and nothing in the hub to approve or reject it.
     expect(flagged.pr).toBeNull();
     // The hostile text never shapes the reply: the flagged template.

@@ -462,6 +462,10 @@ export const derivePipeline = (
     verifyState = 'done';
     verifyDetail = repro ? 'Repro → 0 fail' : '0 err · 0 fail';
     verifyBadge = 'Green';
+  } else if (final && !hasBaseline && task.status !== 'error') {
+    // Ended before the sandbox, e.g. a flagged report stops at the scan.
+    verifyState = 'stopped';
+    verifyDetail = 'Not reached';
   } else if (task.status === 'flagged' && hasRefusals) {
     verifyState = 'blocked';
     verifyDetail = 'Halted by policy';
@@ -612,7 +616,9 @@ export const derivePipeline = (
     : task.status === 'pr_opened'
       ? 'Pipeline complete'
       : task.status === 'flagged'
-        ? 'Contained before publish'
+        ? hasBaseline
+          ? 'Contained before publish'
+          : 'Contained at the scan'
         : task.status === 'error'
           ? 'Pipeline failed'
           : 'Pipeline stopped';

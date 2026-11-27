@@ -10,11 +10,12 @@ import {
   matchDecisions,
   parseEditsResponse,
   promptSections,
+  flaggedReason,
   rankFiles,
   readCheckOutput,
   resolveInside,
   runTaskLoop,
-  scanTaskInput,
+  scanReport,
   type CheckCounts,
   type CheckOutcome,
   type Edit,
@@ -263,7 +264,7 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     return;
   }
   const { policy } = role;
-  const signals = scanTaskInput(input.text);
+  const signals = scanReport(input);
   if (signals.length) emit({ type: 'input_flagged', signals });
   const sources: { path: string; content: string }[] = [];
   const tracked = await trackedFiles(ws);
@@ -287,6 +288,15 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     files: contextFiles,
     decisions: decisions.map((d) => ({ id: d.id, title: d.title })),
   });
+  // A flagged report ends here, before any install, sandbox or model call:
+  // the reproduce step asks for a failing test, and a report with no real
+  // bug only gets one by the model inventing a bug. Decided on host facts
+  // only (the scanner's signals), never on the text. A fixture run goes on:
+  // it exists to show the deeper layers stopping a hostile proposal.
+  if (signals.length && !task.fixtureOf) {
+    emit({ type: 'status', status: 'flagged', reason: flaggedReason(signals) });
+    return;
+  }
 
   // Baseline: install with registry-only network (or reuse a cached install
   // of the same lockfile), then check with none.
@@ -550,25 +560,8 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
     emit({ type: 'status', status: 'flagged', reason: fixtureReason(events) });
     return;
   }
-  // A flagged report always ends flagged: green checks never publish it
-  // (a model that refused the report's instructions still produced
-  // a change nobody asked for in good faith), and a loop that gave up ends
-  // flagged too, keeping its own reason so the receipt shows why it stopped.
-  // Decided on host facts only (the scanner's signals and the loop's
-  // outcome), never on the text. Spec 4 owns the full halt rule; see
-  // docs/ticket-to-pr/README.md, "Open questions".
-  if (signals.length) {
-    const carriedInstructions = `The report carried instructions (${signals.join(', ')})`;
-    emit({
-      type: 'status',
-      status: 'flagged',
-      reason:
-        outcome.status === 'green'
-          ? `${carriedInstructions}, so no pull request was opened`
-          : `${carriedInstructions}; ${outcome.reason}`,
-    });
-    return;
-  }
+  // A flagged report never gets here: it ended after the context phase (the
+  // halt rule, docs/ticket-to-pr/README.md, "Open questions").
   if (outcome.status === 'halted') {
     emit({ type: 'status', status: 'flagged', reason: outcome.reason });
     return;

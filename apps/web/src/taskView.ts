@@ -1,8 +1,9 @@
-import type {
-  EventEnvelope,
-  Role,
-  TaskSnapshot,
-  TaskStatus,
+import {
+  isFinalStatus,
+  type EventEnvelope,
+  type Role,
+  type TaskSnapshot,
+  type TaskStatus,
 } from '@app/shared';
 
 // Pure helpers behind the views: what each status looks like, and the task
@@ -92,7 +93,7 @@ export const outcome = (t: TaskSnapshot): Outcome => {
       return {
         headline: 'Stopped: the report tried to steer the agent',
         detail:
-          'The report carried instructions, so nothing was proposed. The developers can see what it tried.',
+          "The report carried instructions, so the agent didn't work on it. The developers can see what it tried.",
         customer: null,
         tone: 'red',
       };
@@ -157,8 +158,16 @@ export const NETWORK_LAYER = 'Network: no way out of the sandbox';
 
 const isHubPath = (path: string) => path === '.hub' || path.startsWith('.hub/');
 
+// A task that ended with no check run (a flagged report ends after the
+// context phase) never reached the layers past the scanner.
 export const taskLayers = (task: TaskSnapshot): Layer[] =>
-  layers(task, task, 'not fired');
+  layers(
+    task,
+    task,
+    isFinalStatus(task.status) && task.iterations.length === 0
+      ? 'not reached'
+      : 'not fired'
+  );
 
 export const fixtureLayers = (
   flagged: TaskSnapshot,

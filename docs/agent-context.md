@@ -70,5 +70,5 @@ Seeds for making this a system, not decisions:
 - **Where the rules live.** The role prompt is in the hub repo, but `FORMAT` and the step lines are in code. Should all prompt text be data that a team can review and change, like decisions are?
 - **Who owns context.** Is tuning context a role in the workspace (with its own scope), or a developer's job?
 - **Selection.** Keyword matching works for the demo repo. What should replace it on a real repo: the decision links, the import graph, the files a report's stack trace names?
-- **Flagged reports.** Should a flagged report get a reproduce step at all, or end `flagged` before the model writes anything? Should a reproduction have to fail for the reported reason (for example, no `as never` casts, or the test must touch the files the report names)?
+- **Flagged reports.** Answered by #40: a flagged report ends `flagged` before the model writes anything. Still open: should a reproduction have to fail for the reported reason (for example, no `as never` casts, or the test must touch the files the report names)?
 - **A receipt.** Record the exact messages per iteration with the task, so a bad run can be explained and replayed.

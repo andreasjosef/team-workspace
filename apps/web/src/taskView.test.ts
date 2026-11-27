@@ -83,6 +83,33 @@ describe('plain words for the support rep', () => {
     expect(o.tone).toBe('red');
     expect(o.customer).toBeNull();
   });
+
+  it("says a flagged report wasn't worked on", () => {
+    const o = outcome(
+      task({ status: 'flagged', inputSignals: ['contains a URL'] })
+    );
+    expect(o.detail).toMatch(/so the agent didn't work on it/);
+  });
+});
+
+describe('containment layers', () => {
+  it('a flagged report that ended before the sandbox: the deeper layers were not reached', () => {
+    const layers = taskLayers(
+      task({
+        status: 'flagged',
+        pr: null,
+        hasDiff: false,
+        phase: 'context',
+        inputSignals: ['tries to override instructions'],
+      })
+    );
+    expect(layers.map((l) => [l.name, l.state])).toEqual([
+      ['Input scanner', 'flagged'],
+      ['Role policy', 'not reached'],
+      ['.hub/ lock', 'not reached'],
+      [NETWORK_LAYER, 'not reached'],
+    ]);
+  });
 });
 
 describe('fixture run', () => {
@@ -145,6 +172,7 @@ describe('fixture run', () => {
 
   it("reads a task's own layers: what fired, what didn't", () => {
     const t = task({
+      iterations: iters(0, 1),
       refusals: [{ path: 'src/auth/users.ts', rule: 'deny src/auth/**' }],
     });
     expect(taskLayers(t).map((l) => [l.name, l.state])).toEqual([
