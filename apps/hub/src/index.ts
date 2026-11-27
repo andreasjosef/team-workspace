@@ -72,6 +72,11 @@ if (env.RUNNER === 'real') {
           hubRepoDir: hub.repoDir,
           scratchDir: tasksDir,
         }),
+    ...(env.github
+      ? {
+          githubRepo: `${env.github.repo.owner}/${env.github.repo.name}`,
+        }
+      : {}),
   });
   console.log(
     env.github

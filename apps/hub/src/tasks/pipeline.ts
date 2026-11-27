@@ -8,6 +8,7 @@ import {
   isTestPath,
   matchDecisions,
   parseEditsResponse,
+  promptSections,
   rankFiles,
   readCheckOutput,
   resolveInside,
@@ -17,8 +18,15 @@ import {
   type CheckOutcome,
   type Edit,
   type Inference,
+  type TaskContext,
 } from '@app/agent';
-import { fail, ok, type Result, type TaskEvent } from '@app/shared';
+import {
+  fail,
+  ok,
+  type IterationAnswer,
+  type Result,
+  type TaskEvent,
+} from '@app/shared';
 import {
   CONTAINER_WORKDIR,
   scanInstallScripts,
@@ -88,12 +96,24 @@ export type PipelineDeps = {
   // The task's page in the hub, linked from the pull request for what its
   // body leaves out.
   receiptUrl?: (taskId: string) => string;
+  // GITHUB_REPO as `owner/name`, when set: the Agent tab links to `.hub/`
+  // at the task's base commit there.
+  githubRepo?: string;
 };
 
 const MAX_REFUSALS = 3;
 const NETWORK_ATTEMPT =
   /ENETUNREACH|EAI_AGAIN|getaddrinfo ENOTFOUND|ECONNREFUSED/;
 const tail = (s: string, n = 8000) => (s.length > n ? `…${s.slice(-n)}` : s);
+const head = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+// Caps on what the Agent tab gets: each prompt section, and per iteration
+// the model's reasoning and why an answer was rejected.
+const MAX_PROMPT_SECTION_CHARS = 4000;
+const MAX_REASONING_CHARS = 2000;
+const MAX_REJECTION_CHARS = 1000;
+// The loop's own note for an answer it didn't take (fixLoop.ts).
+const REJECTION_NOTE =
+  /^Iteration \d+: (?:answer rejected|patch refused) \((.*)\)$/s;
 
 export const createPipeline = (deps: PipelineDeps): TaskRunner => ({
   run: async (task) => {
@@ -319,11 +339,17 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   emit({ type: 'phase', phase: 'fix' });
   let refusals = 0;
   const touched = new Set<string>();
+  // Recorded for the Agent tab, never read back by the loop: the prompt of
+  // the first call, and what the model answered in the iteration under way,
+  // which goes out with that iteration's check.
+  let promptRecorded = false;
+  let answer: IterationAnswer = {};
   const checkRoleScope = (edits: Edit[]): Result<null> => {
     const verdict = checkPolicy(policy, edits);
     if (verdict.ok) return ok(null);
     for (const r of verdict.refusals)
       emit({ type: 'policy_refused', path: r.path, rule: r.rule });
+    answer.refused = [...(answer.refused ?? []), ...verdict.refusals];
     refusals += verdict.refusals.length;
     return fail(
       'forbidden',
@@ -367,24 +393,41 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
         const content = await readInside(ws.repo, path);
         if (content !== null) files.push({ path, content });
       }
-      const reply = await deps.inference.complete(
-        buildTaskMessages({
-          policy,
-          rolePrompt: role.prompt,
-          task: input,
-          decisions,
-          files,
-          errors: touched.size ? latest.errors : '',
-          ...(lastRejection ? { lastRejection } : {}),
-          ...(step ? { step, existingTests } : {}),
-          ...(reproduction ? { reproduction } : {}),
-        })
-      );
+      const ctx: TaskContext = {
+        policy,
+        rolePrompt: role.prompt,
+        task: input,
+        decisions,
+        files,
+        errors: touched.size ? latest.errors : '',
+        ...(lastRejection ? { lastRejection } : {}),
+        ...(step ? { step, existingTests } : {}),
+        ...(reproduction ? { reproduction } : {}),
+      };
+      if (!promptRecorded) {
+        promptRecorded = true;
+        emit({
+          type: 'prompt',
+          sections: promptSections(ctx, MAX_PROMPT_SECTION_CHARS),
+          repo: deps.githubRepo ?? null,
+        });
+      }
+      const reply = await deps.inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
-      const answer = parseEditsResponse(reply.value);
-      if (answer.success && answer.value.reasoning)
-        reasoning.push(answer.value.reasoning);
-      return answer;
+      const parsed = parseEditsResponse(reply.value);
+      if (parsed.success && parsed.value.reasoning)
+        reasoning.push(parsed.value.reasoning);
+      if (parsed.success)
+        answer = {
+          ...(parsed.value.reasoning
+            ? { reasoning: head(parsed.value.reasoning, MAX_REASONING_CHARS) }
+            : {}),
+          proposed: parsed.value.edits.map((e) => ({
+            path: e.path,
+            create: isCreate(e),
+          })),
+        };
+      return parsed;
     },
     // The loop runs this on every answer, before a bug's step rule; apply
     // runs it again before writing. An answer that passed once passes again,
@@ -402,14 +445,22 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       });
       return ok(null);
     },
-    onIteration: (n, c) =>
+    onIteration: (n, c) => {
       emit({
         type: 'iteration',
         n,
         typeErrors: c.typeErrors,
         testsFailed: c.testsFailed,
-      }),
-    onNote: (message) => emit({ type: 'log', message }),
+        ...answer,
+      });
+      answer = {};
+    },
+    onNote: (message) => {
+      const rejected = REJECTION_NOTE.exec(message);
+      if (rejected?.[1])
+        answer.rejected = head(rejected[1], MAX_REJECTION_CHARS);
+      emit({ type: 'log', message });
+    },
   });
 
   const diff = await diffPaths(ws, [...touched]);

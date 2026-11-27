@@ -1,6 +1,8 @@
 import {
   checkPolicy,
+  isCreate,
   matchDecisions,
+  promptSections,
   rankFiles,
   scanTaskInput,
   type Edit,
@@ -199,6 +201,7 @@ export const createMockRunner = (
     branch,
     input,
     policy,
+    rolePrompt,
     emit,
     setDiff,
   }: TaskHandle) => {
@@ -252,6 +255,28 @@ export const createMockRunner = (
     }
 
     emit({ type: 'phase', phase: 'fix' });
+    // The prompt a real run would send first, built by the same code. The
+    // mock's base commit isn't real, so no link to it.
+    emit({
+      type: 'prompt',
+      sections: promptSections(
+        {
+          policy,
+          rolePrompt,
+          task: input,
+          decisions,
+          files: hub.sourceFiles.filter((f) => files.includes(f.path)),
+          errors: '',
+          ...(input.kind === 'bug' ? { step: 'reproduce' as const } : {}),
+        },
+        4000
+      ),
+      repo: null,
+    });
+    const answerOf = (s: Step) => ({
+      reasoning: s.reasoning,
+      proposed: s.edits.map((e) => ({ path: e.path, create: isCreate(e) })),
+    });
     let diff = '';
     let refusals = 0;
     let n = 0;
@@ -268,7 +293,14 @@ export const createMockRunner = (
           type: 'log',
           message: `Iteration ${n}: patch refused by the ${policy.name} policy`,
         });
-        emit({ type: 'iteration', n, typeErrors: 0, testsFailed: 0 });
+        emit({
+          type: 'iteration',
+          n,
+          typeErrors: 0,
+          testsFailed: 0,
+          ...answerOf(s),
+          refused: verdict.refusals,
+        });
         if (refusals >= 3) {
           setDiff(diff);
           emit({
@@ -285,6 +317,7 @@ export const createMockRunner = (
       if (s.networkAttempt) {
         cmd('npx --no-install vitest run', `Error: ${s.networkAttempt}`, 1);
         emit({ type: 'blocked', kind: 'network', detail: s.networkAttempt });
+        emit({ type: 'iteration', n, ...s.after, ...answerOf(s) });
         setDiff(diff);
         emit({
           type: 'status',
@@ -301,7 +334,7 @@ export const createMockRunner = (
           : ' Tests  all passed',
         s.after.testsFailed ? 1 : 0
       );
-      emit({ type: 'iteration', n, ...s.after });
+      emit({ type: 'iteration', n, ...s.after, ...answerOf(s) });
     }
 
     if (!diff) {

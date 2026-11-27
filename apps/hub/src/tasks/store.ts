@@ -47,6 +47,7 @@ export const createTaskStore = () => {
       blocked: [],
       previewUrl: null,
       pr: null,
+      prompt: null,
       diff: null,
       events: [],
       listeners: new Set(),
@@ -63,12 +64,13 @@ export const createTaskStore = () => {
       case 'phase':
         t.phase = e.phase;
         break;
-      case 'iteration':
-        t.iterations.push({
-          n: e.n,
-          typeErrors: e.typeErrors,
-          testsFailed: e.testsFailed,
-        });
+      case 'iteration': {
+        const { type: _type, ...iteration } = e;
+        t.iterations.push(iteration);
+        break;
+      }
+      case 'prompt':
+        t.prompt = { sections: e.sections, repo: e.repo };
         break;
       case 'context':
         t.context = { files: e.files, decisions: e.decisions };

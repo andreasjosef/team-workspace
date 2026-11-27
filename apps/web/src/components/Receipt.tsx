@@ -1,6 +1,7 @@
 import type { RoleSummary, TaskSnapshot } from '@app/shared';
 import { useState } from 'react';
 import { useDiff, useRoles } from '../queries.ts';
+import { AgentView } from './AgentView.tsx';
 import { DiffView } from './DiffView.tsx';
 import { LiveLog } from './LiveLog.tsx';
 
@@ -159,7 +160,7 @@ const ChecksView = ({ task }: { task: TaskSnapshot }) =>
     </table>
   );
 
-type Tab = 'changes' | 'checks' | 'context' | 'containment' | 'log';
+type Tab = 'changes' | 'checks' | 'context' | 'agent' | 'containment' | 'log';
 
 export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
   const [picked, setPicked] = useState<Tab | null>(null);
@@ -179,6 +180,7 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
     { id: 'changes', label: 'Changes', hidden: !task.hasDiff },
     { id: 'checks', label: 'Checks' },
     { id: 'context', label: 'Context' },
+    { id: 'agent', label: 'Agent' },
     { id: 'containment', label: flagged ? 'Containment ●' : 'Containment' },
     { id: 'log', label: 'Live log' },
   ];
@@ -215,6 +217,7 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
         {tab === 'changes' && <DiffView diff={diff.data ?? ''} />}
         {tab === 'checks' && <ChecksView task={task} />}
         {tab === 'context' && <ContextView task={task} />}
+        {tab === 'agent' && <AgentView task={task} />}
         {tab === 'containment' && <ContainmentView task={task} />}
         {tab === 'log' && <LiveLog key={task.id} taskId={task.id} />}
       </div>

@@ -506,3 +506,48 @@ table.iters th {
 .receipt-body .log {
   max-height: 22rem;
 }
+
+/* The Agent tab: the prompt in collapsible sections, then each iteration.
+   The model's words carry their own edge and label, never the hub's look. */
+.agent-heading {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.9em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.prompt-section summary {
+  cursor: pointer;
+}
+.prompt-section pre {
+  margin: 0.3rem 0 0.6rem;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}
+.agent-iterations {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.agent-iteration {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--bg-soft);
+}
+.agent-iteration-head {
+  font-weight: 700;
+}
+.model-says {
+  margin: 0.3rem 0;
+  padding: 0.2rem 0 0.2rem 0.8rem;
+  border-left: 2px solid var(--purple);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+.model-says .untrusted-label {
+  display: block;
+  font-style: normal;
+}
