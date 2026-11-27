@@ -456,78 +456,9 @@ table.iters th {
   color: var(--muted);
 }
 
-/* The task in plain words: the first thing a support rep reads. */
-.outcome {
-  display: block;
-  background: var(--bg-mid);
-  border-radius: var(--radius);
-  padding: 1.15rem 1.35rem;
-  margin: 1rem 0;
-  color: var(--text);
-  text-decoration: none;
-}
-.outcome-pr {
-  display: inline-block;
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 0 0 0.6rem;
-}
-.outcome-headline {
-  font-size: 1.25rem;
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-  margin: 0 0 0.25rem;
-}
-.outcome-detail {
-  margin: 0 0 0.5rem;
-}
-.outcome-customer {
-  margin: 0 0 0.75rem;
-  font-style: italic;
-}
-.outcome .actions {
-  margin: 0.75rem 0 0;
-}
 .task-meta {
   margin: 0;
 }
-.safety {
-  margin: 0.6rem 0 0;
-  font-size: 0.9em;
-}
-
-/* Report → reproduced → fixed → review. */
-.progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem 1.4rem;
-  list-style: none;
-  padding: 0;
-  margin: 0.5rem 0 0;
-  font-size: 0.9em;
-}
-.step {
-  color: var(--faint);
-}
-.step-mark {
-  margin-right: 0.35rem;
-}
-.step-done {
-  color: var(--muted);
-}
-.step-done .step-mark {
-  color: var(--green);
-}
-.step-current {
-  color: var(--gold);
-  font-weight: 700;
-}
-.step-stopped {
-  color: var(--red);
-}
-
 /* Everything below is the receipt for developers. */
 .details-head {
   margin: 2.25rem 0 0.25rem;
@@ -595,10 +526,6 @@ table.iters th {
 .message .untrusted {
   margin: 0.4rem 0 0;
 }
-.outcome-reason {
-  margin: 0 0 0.5rem;
-}
-
 .forward {
   margin: 1.5rem 0;
 }
@@ -1113,6 +1040,20 @@ table.iters th {
 .pipe-replay-btn.active {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+/* The outcome in plain words, at the top of the pipeline card. */
+.outcome-summary {
+  margin: 0 0 1rem;
+}
+.outcome-headline {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin: 0 0 0.25rem;
+}
+.outcome-detail {
+  margin: 0 0 0.25rem;
 }
 
 /* 5 horizontal stages with flat animated conduits between them */
@@ -1853,20 +1794,6 @@ table.iters th {
 .view-tab-status {
   margin-left: 0.6rem;
   font-weight: 400;
-  font-size: 0.85em;
-}
-
-.outcome-card {
-  margin: 0 0 1.25rem;
-}
-.outcome-card .card-headline {
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-  margin: 0 0 0.15rem;
-}
-.outcome-card .progress,
-.outcome-card .safety {
   font-size: 0.85em;
 }
 

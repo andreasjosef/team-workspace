@@ -4,7 +4,6 @@ import {
   fixtureLayers,
   NETWORK_LAYER,
   outcome,
-  progress,
   replyDraftLabel,
   reproduced,
   runSteps,
@@ -83,26 +82,6 @@ describe('plain words for the support rep', () => {
     const o = outcome(task({ status: 'flagged' }));
     expect(o.tone).toBe('red');
     expect(o.customer).toBeNull();
-  });
-
-  it('walks the steps: reported, reproduced, fixed, review', () => {
-    const states = (t: TaskSnapshot) => progress(t).map((s) => s.state);
-    expect(states(task({ iterations: iters(0, 1, 0) }))).toEqual([
-      'done',
-      'done',
-      'done',
-      'current',
-    ]);
-    expect(
-      states(task({ status: 'working', phase: 'fix', iterations: iters(0) }))
-    ).toEqual(['done', 'current', 'todo', 'todo']);
-    expect(
-      states(task({ status: 'gave_up', iterations: iters(0, 1, 1, 1) }))
-    ).toEqual(['done', 'done', 'stopped', 'todo']);
-    // Green, but publishing failed: it stopped before the developer.
-    expect(
-      states(task({ status: 'error', pr: null, iterations: iters(0, 1, 0) }))
-    ).toEqual(['done', 'done', 'stopped', 'todo']);
   });
 });
 

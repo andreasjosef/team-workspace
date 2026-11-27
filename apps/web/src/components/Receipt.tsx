@@ -21,25 +21,6 @@ import { RunView } from './RunView.tsx';
 
 // One line for the top of the task: was anything stopped? The full list is
 // on the Containment tab.
-export const SafetyLine = ({ task }: { task: TaskSnapshot }) => {
-  const plural = (n: number, word: string) =>
-    `${n} ${word}${n === 1 ? '' : 's'}`;
-  const parts = [
-    task.inputSignals.length > 0 && 'the report carried instructions',
-    task.refusals.length > 0 &&
-      `${plural(task.refusals.length, 'edit')} refused`,
-    task.blocked.length > 0 &&
-      `${plural(task.blocked.length, 'network attempt')} blocked`,
-  ].filter(Boolean);
-  return parts.length ? (
-    <p className="safety tone-red">● Contained: {parts.join(', ')}.</p>
-  ) : (
-    <p className="safety tone-green">
-      ● Contained: no secrets, no network, nothing stopped.
-    </p>
-  );
-};
-
 const RoleScope = ({ role }: { role: RoleSummary }) => (
   <dl className="kv">
     <dt>May change</dt>

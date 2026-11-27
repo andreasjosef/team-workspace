@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import type {
   ConnectorState,
   PipelineModel,
@@ -12,6 +12,8 @@ type Props = {
   canReplay: boolean;
   onReplay: () => void;
   onStopReplay: () => void;
+  // The task in plain words, above the stages (Agent view only).
+  outcome?: ReactNode;
 };
 
 const StageIcon = ({ id, blocked }: { id: StageId; blocked: boolean }) => {
@@ -259,6 +261,7 @@ export const PipelineFlow = ({
   canReplay,
   onReplay,
   onStopReplay,
+  outcome,
 }: Props) => {
   const { elapsed, stepSeconds } = useTimers(
     model.live,
@@ -321,6 +324,8 @@ export const PipelineFlow = ({
           )}
         </div>
       </div>
+
+      {outcome}
 
       <div className="pipeline-track">
         {model.stages.map((stage, idx) => (
