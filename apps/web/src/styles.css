@@ -254,33 +254,183 @@ table.iters th {
   font-weight: 400;
 }
 
-.diff {
+/* Changes tab: one card per file, syntax colours, changed words marked. */
+.dv {
+  padding: 0.75rem;
+  font-size: 0.85em;
+}
+.dv-empty {
+  padding: 1rem;
+}
+.dv .tk-kw {
+  color: var(--gold);
+}
+.dv .tk-str {
+  color: var(--cyan);
+}
+.dv :is(.tk-num, .tk-lit, .tk-const) {
+  color: var(--purple);
+}
+.dv .tk-fn {
+  color: var(--blue);
+}
+.dv .tk-type {
+  color: var(--text-strong);
+}
+.dv :is(.tk-op, .tk-pun) {
+  color: var(--muted);
+}
+.dv .tk-com {
+  color: var(--muted);
+  font-style: italic;
+}
+.dv-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  margin: 0 0.15rem 0.6rem;
+}
+.dv-counts {
+  display: inline-flex;
+  gap: 0.4rem;
   font-family: var(--font-mono);
-  font-size: 0.8em;
-  padding: 0.5rem 0;
+  font-variant-numeric: tabular-nums;
+}
+.dv-plus {
+  color: var(--green);
+}
+.dv-minus {
+  color: var(--red);
+}
+.dv-file {
+  border: 1px solid var(--bg-soft);
+  border-radius: var(--radius);
+  background: var(--bg-mid);
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.dv-file-head {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0 0.75rem;
+  background: var(--bg-soft);
+  color: var(--muted);
+  cursor: pointer;
+}
+.dv-file-head:hover {
+  background: var(--bg-hover);
+}
+.dv-file-head:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+}
+.dv-file-body {
+  overflow-x: auto;
+}
+.dv-chev {
+  color: var(--faint);
+  flex: none;
+  transition: transform 120ms ease;
+}
+.dv-chev.open {
+  transform: rotate(90deg);
+}
+.dv-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-name {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.dv-badge {
+  font-size: 0.85em;
+  padding: 0 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--bg-hover);
+}
+.dv-badge.added {
+  color: var(--green);
+}
+.dv-badge.deleted {
+  color: var(--red);
+}
+.dv-code {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  line-height: 1.6;
   margin: 0;
 }
-.diff div {
-  padding: 0 1rem;
+.dv-code td {
+  padding: 0;
+  border: 0;
+  vertical-align: top;
+}
+.dv-no {
+  width: 1%;
+  min-width: 2.25rem;
+  padding: 0 0.5rem !important;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dv-sign {
+  width: 1rem;
+  text-align: center;
+  user-select: none;
+  color: var(--faint);
+}
+.dv-text {
   white-space: pre;
+  padding: 0 1rem 0 0.25rem !important;
 }
-.diff .add {
+.dv-row.add td {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+.dv-row.add :is(.dv-no, .dv-sign) {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
   color: var(--green);
-  background: color-mix(in srgb, var(--green) 14%, transparent);
-  box-shadow: inset 2px 0 0 var(--green);
 }
-.diff .del {
+.dv-row.del td {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.dv-row.del :is(.dv-no, .dv-sign) {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
   color: var(--red);
-  background: color-mix(in srgb, var(--red) 14%, transparent);
-  box-shadow: inset 2px 0 0 var(--red);
 }
-.diff .hunk {
-  color: var(--blue);
+.dv-row.add .chg {
+  background: color-mix(in srgb, var(--green) 32%, transparent);
+  border-radius: 2px;
+}
+.dv-row.del .chg {
+  background: color-mix(in srgb, var(--red) 32%, transparent);
+  border-radius: 2px;
+}
+.dv-hunk td {
   background: color-mix(in srgb, var(--blue) 8%, transparent);
+  color: var(--muted);
+  padding: 0.2rem 0.75rem !important;
+  border-block: 1px solid var(--bg-soft);
 }
-.diff .file {
-  color: var(--text);
-  font-weight: 700;
+.dv-hunk:first-child td {
+  border-top: 0;
+}
+.dv-hunk-range {
+  color: var(--blue);
+  margin-right: 0.75rem;
 }
 
 .log {
@@ -517,9 +667,6 @@ table.iters th {
 }
 .receipt-body pre {
   background: var(--bg-soft);
-}
-.receipt-body .diff {
-  background: transparent;
 }
 .receipt-body .untrusted {
   background: var(--bg-soft);
