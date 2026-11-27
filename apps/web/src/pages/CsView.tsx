@@ -2,9 +2,7 @@ import type { Incident } from '@app/shared';
 import { useSearchParams } from 'react-router';
 import { Dot, Status } from '../components/common.tsx';
 import { ForwardButton } from '../components/ForwardButton.tsx';
-import { OutcomeCard } from '../components/Outcome.tsx';
-import { ReceiptTabs } from '../components/Receipt.tsx';
-import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
+import { Workspace } from '../components/Workspace.tsx';
 import { useIncidents, useTasks } from '../queries.ts';
 import { taskForIncident, timeAgo, type Tone } from '../taskView.ts';
 
@@ -15,8 +13,8 @@ const severityTone: Record<string, Tone> = {
 };
 
 // The support rep's cockpit: the inbox of customer reports on the left, and
-// the one they're working on in the middle. Forwarding a report keeps them
-// here; the agent's progress, the outcome and the receipt fill in in place.
+// the one they're working on in the middle, as a conversation with the
+// customer or as the agent's working. Forwarding a report keeps them here.
 export const CsView = () => {
   const reports = useIncidents().data ?? [];
   const tasks = useTasks().data ?? [];
@@ -35,7 +33,13 @@ export const CsView = () => {
               <li key={r.id}>
                 <button
                   className={`item ${r.id === selected?.id ? 'selected' : ''}`}
-                  onClick={() => setParams({ report: r.id })}
+                  onClick={() =>
+                    setParams((p) => {
+                      const next = new URLSearchParams(p);
+                      next.set('report', r.id);
+                      return next;
+                    })
+                  }
                 >
                   <span className="item-title">
                     <Dot tone={severityTone[r.severity] ?? 'muted'} />
@@ -74,15 +78,13 @@ const Report = ({ report }: { report: Incident }) => {
         · {timeAgo(report.at)}
       </p>
       <h1 className="focus-title">{report.subject}</h1>
-      {task && <OutcomeCard task={task} />}
-      {task && <ReplyDraftBox task={task} />}
-      <section className="message">
-        <div className="untrusted-label">
-          {report.customer} wrote · treated as untrusted
-        </div>
-        <p className="untrusted">{report.body}</p>
-      </section>
-      {task ? <ReceiptTabs task={task} /> : <ForwardButton report={report} />}
+      <Workspace
+        from={report.customer}
+        label={`via ${report.channel} · treated as untrusted`}
+        text={report.body}
+        task={task}
+        forward={<ForwardButton report={report} />}
+      />
     </>
   );
 };

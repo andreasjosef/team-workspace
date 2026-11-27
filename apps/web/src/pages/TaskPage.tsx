@@ -1,13 +1,10 @@
 import { Link, useParams } from 'react-router';
 import { Status } from '../components/common.tsx';
-import { OutcomeCard } from '../components/Outcome.tsx';
-import { ReceiptTabs } from '../components/Receipt.tsx';
-import { ReplyDraftBox } from '../components/ReplyDraft.tsx';
+import { Workspace } from '../components/Workspace.tsx';
 import { useTask } from '../queries.ts';
 
-// One task on its own page, linkable from anywhere. Same
-// order as the cockpit: the outcome in plain words, the customer's report,
-// then the receipt.
+// One task on its own page, linkable from anywhere, with the same two
+// views as the cockpit: the conversation and the agent's working.
 export const TaskPage = () => {
   const params = useParams();
   const task = useTask(params.id ?? '');
@@ -33,17 +30,16 @@ export const TaskPage = () => {
         <h1 className="focus-title">{t.input.title}</h1>
         <Status status={t.status} />
       </div>
-      <OutcomeCard task={t} />
-      <ReplyDraftBox task={t} />
-      <section className="message">
-        <div className="untrusted-label">
-          {t.fixtureOf === null
-            ? "The customer's report · treated as untrusted"
-            : "The fixture's script · fixed in the hub's code, not the model"}
-        </div>
-        <p className="untrusted">{t.input.text}</p>
-      </section>
-      <ReceiptTabs task={t} />
+      <Workspace
+        from={t.fixtureOf === null ? 'The customer' : 'The fixture'}
+        label={
+          t.fixtureOf === null
+            ? 'treated as untrusted'
+            : "a script fixed in the hub's code, not the model"
+        }
+        text={t.input.text}
+        task={t}
+      />
     </main>
   );
 };

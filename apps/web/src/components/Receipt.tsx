@@ -10,9 +10,9 @@ import {
   type Layer,
   type LayerState,
 } from '../taskView.ts';
-import { AgentView } from './AgentView.tsx';
 import { DiffView } from './DiffView.tsx';
 import { LiveLog } from './LiveLog.tsx';
+import { RunView } from './RunView.tsx';
 
 // The receipt: what the agent saw, what it ran, what it changed and what got
 // stopped. It lets a developer trust (or distrust) the change without
@@ -213,31 +213,7 @@ const ContainmentView = ({ task }: { task: TaskSnapshot }) => {
   );
 };
 
-const ChecksView = ({ task }: { task: TaskSnapshot }) =>
-  task.iterations.length === 0 ? (
-    <p className="empty">Not run yet</p>
-  ) : (
-    <table className="iters">
-      <thead>
-        <tr>
-          <th>step</th>
-          <th>type errors</th>
-          <th>failing tests</th>
-        </tr>
-      </thead>
-      <tbody>
-        {task.iterations.map((i, k) => (
-          <tr key={k}>
-            <td>{i.n === 0 ? 'baseline' : i.n}</td>
-            <td>{i.typeErrors}</td>
-            <td className={i.testsFailed ? 'tone-red' : ''}>{i.testsFailed}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-
-type Tab = 'changes' | 'checks' | 'agent' | 'containment' | 'log';
+type Tab = 'changes' | 'run' | 'containment' | 'log';
 
 export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
   const [picked, setPicked] = useState<Tab | null>(null);
@@ -255,8 +231,7 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
         : 'log');
   const tabs: { id: Tab; label: string; hidden?: boolean }[] = [
     { id: 'changes', label: 'Changes', hidden: !task.hasDiff },
-    { id: 'checks', label: 'Checks' },
-    { id: 'agent', label: 'Agent' },
+    { id: 'run', label: 'Run' },
     { id: 'containment', label: flagged ? 'Containment ●' : 'Containment' },
     { id: 'log', label: 'Log' },
   ];
@@ -264,13 +239,6 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
   return (
     <section className="receipt">
       <div className="receipt-head">
-        <h2>Receipt</h2>
-        {task.pr && (
-          <a className="receipt-pr" href={task.pr.url} rel="noreferrer">
-            Pull request #{task.pr.number}
-            {task.pr.draft ? ' (draft)' : ''}
-          </a>
-        )}
         <div className="tabs" role="tablist">
           {tabs
             .filter((t) => !t.hidden)
@@ -291,8 +259,7 @@ export const ReceiptTabs = ({ task }: { task: TaskSnapshot }) => {
       </div>
       <div className={`receipt-body ${tab === 'changes' ? 'flush' : ''}`}>
         {tab === 'changes' && <DiffView diff={diff.data ?? ''} />}
-        {tab === 'checks' && <ChecksView task={task} />}
-        {tab === 'agent' && <AgentView task={task} />}
+        {tab === 'run' && <RunView task={task} />}
         {tab === 'containment' && <ContainmentView task={task} />}
         {tab === 'log' && <LiveLog key={task.id} taskId={task.id} />}
       </div>

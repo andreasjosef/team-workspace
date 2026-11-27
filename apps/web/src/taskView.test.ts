@@ -7,6 +7,7 @@ import {
   progress,
   replyDraftLabel,
   reproduced,
+  runSteps,
   taskLayers,
   taskForIncident,
   timeAgo,
@@ -194,5 +195,52 @@ describe('helpers', () => {
     const now = Date.parse('2026-11-18T12:00:00Z');
     expect(timeAgo('2026-11-18T11:59:30Z', now)).toBe('30s ago');
     expect(timeAgo('2026-11-18T10:00:00Z', now)).toBe('2h ago');
+  });
+});
+
+describe('runSteps', () => {
+  const verdicts = (t: TaskSnapshot) => runSteps(t).map((s) => s.verdict);
+
+  it('reads a bug run as baseline, reproduced, green', () => {
+    expect(verdicts(task({ iterations: iters(0, 1, 0) }))).toEqual([
+      'baseline',
+      'reproduced',
+      'green',
+    ]);
+  });
+
+  it('marks rejected and refused answers, whatever the counts', () => {
+    const t = task({
+      iterations: [
+        { n: 0, typeErrors: 0, testsFailed: 0 },
+        { n: 1, typeErrors: 0, testsFailed: 0, rejected: 'no test' },
+        {
+          n: 2,
+          typeErrors: 0,
+          testsFailed: 0,
+          refused: [{ path: '.hub/roles/cs.yaml', rule: 'hub' }],
+        },
+      ],
+    });
+    expect(verdicts(t)).toEqual(['baseline', 'rejected', 'refused']);
+  });
+
+  it('compares a fix step with the step before it', () => {
+    const t = task({
+      iterations: [
+        { n: 0, typeErrors: 0, testsFailed: 0 },
+        { n: 1, typeErrors: 0, testsFailed: 2 },
+        { n: 2, typeErrors: 3, testsFailed: 2 },
+        { n: 3, typeErrors: 0, testsFailed: 1 },
+        { n: 4, typeErrors: 0, testsFailed: 1 },
+      ],
+    });
+    expect(verdicts(t)).toEqual([
+      'baseline',
+      'reproduced',
+      'worse',
+      'better',
+      'no change',
+    ]);
   });
 });

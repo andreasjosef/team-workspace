@@ -230,3 +230,65 @@ const layers = (
     },
   ];
 };
+
+// The Run tab: each check as one step, with what happened in a word. The
+// verdicts follow the fix loop's rules (packages/agent/src/fixLoop.ts): a
+// bug is reproduced (more tests fail than at the baseline) before it's
+// fixed, and an answer that was rejected or refused leaves the counts as
+// they were. Read from the snapshot only, never from the model's words.
+export type StepVerdict =
+  | 'baseline'
+  | 'reproduced'
+  | 'green'
+  | 'better'
+  | 'worse'
+  | 'no change'
+  | 'rejected'
+  | 'refused';
+
+export type RunStep = {
+  n: number;
+  typeErrors: number;
+  testsFailed: number;
+  verdict: StepVerdict;
+  tone: Tone;
+};
+
+const verdictTone: Record<StepVerdict, Tone> = {
+  baseline: 'muted',
+  reproduced: 'gold',
+  green: 'green',
+  better: 'blue',
+  worse: 'red',
+  'no change': 'muted',
+  rejected: 'muted',
+  refused: 'red',
+};
+
+export const runSteps = (t: TaskSnapshot): RunStep[] => {
+  const [baseline] = t.iterations;
+  let repro = false;
+  return t.iterations.map((it, k) => {
+    const prev = t.iterations[k - 1];
+    const verdict: StepVerdict = ((): StepVerdict => {
+      if (k === 0 || !baseline || !prev) return 'baseline';
+      if (it.refused?.length) return 'refused';
+      if (it.rejected) return 'rejected';
+      if (!repro && it.testsFailed > baseline.testsFailed) {
+        repro = true;
+        return 'reproduced';
+      }
+      if (it.testsFailed === 0 && it.typeErrors === 0) return 'green';
+      const before = prev.testsFailed + prev.typeErrors;
+      const after = it.testsFailed + it.typeErrors;
+      return after < before ? 'better' : after > before ? 'worse' : 'no change';
+    })();
+    return {
+      n: it.n,
+      typeErrors: it.typeErrors,
+      testsFailed: it.testsFailed,
+      verdict,
+      tone: verdictTone[verdict],
+    };
+  });
+};

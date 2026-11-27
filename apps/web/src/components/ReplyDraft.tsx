@@ -39,7 +39,9 @@ const Editor = ({ text, label }: { text: string; label: string }) => {
         }}
       />
       <div className="actions">
-        <button onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+        <button className="btn" onClick={copy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
         <span className="muted small">
           The hub never sends it: check it, then paste it into your reply.
         </span>
