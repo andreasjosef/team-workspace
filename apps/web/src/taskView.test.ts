@@ -294,6 +294,23 @@ describe('threadEvents', () => {
     ]);
   });
 
+  it("shows the model's reason when it stopped without a fix", () => {
+    const events = stream(
+      { type: 'status', status: 'working' },
+      { type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 },
+      {
+        type: 'status',
+        status: 'gave_up',
+        reason:
+          'The agent stopped without a fix: codes are case-sensitive on purpose (D-007).',
+      }
+    );
+    expect(threadEvents(events).at(-1)).toMatchObject({
+      text: 'Stopped: The agent stopped without a fix: codes are case-sensitive on purpose (D-007).',
+      tone: 'muted',
+    });
+  });
+
   it('reads passing checks as neutral once something was stopped', () => {
     const events = stream(
       { type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 },

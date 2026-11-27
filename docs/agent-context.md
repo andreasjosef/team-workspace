@@ -8,11 +8,11 @@ Two messages per model call, built by `buildTaskMessages` in `packages/agent/src
 
 **System message**
 
-| Part                    | Source                                                    | Notes                                                                                                                       |
-| ----------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Role prompt             | `.hub/prompts/<role>.md` in the hub repo                  | Per role. Not agent-writable.                                                                                               |
-| Scope                   | `describeScope(policy)` in `packages/agent/src/policy.ts` | The paths this role may and may not edit, from its role file.                                                               |
-| Answer format and rules | `FORMAT` in `prompt.ts`                                   | JSON edit format, Vitest for reproductions, "follow decisions", the `<untrusted>` rule. Lives in code, not in the hub repo. |
+| Part                    | Source                                                    | Notes                                                                                                                                                                                                                                                                                          |
+| ----------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Role prompt             | `.hub/prompts/<role>.md` in the hub repo                  | Per role. Not agent-writable.                                                                                                                                                                                                                                                                  |
+| Scope                   | `describeScope(policy)` in `packages/agent/src/policy.ts` | The paths this role may and may not edit, from its role file.                                                                                                                                                                                                                                  |
+| Answer format and rules | `FORMAT` in `prompt.ts`                                   | JSON edit format, or a `stop` answer with a reason (#47: when the behaviour is intended, it can't be reproduced from the code, or the report asks for something the agent won't do), Vitest for reproductions, "follow decisions", the `<untrusted>` rule. Lives in code, not in the hub repo. |
 
 **User message**
 
@@ -60,6 +60,7 @@ Newest first. Each entry: what we saw, the evidence, what we changed.
 - **Tokens are logged, not shown** (#44). Each answered model call leaves one log line with the API's `usage` (prompt, completion and total tokens), so a task's log says what each prompt cost. The Agent tab doesn't show them yet, and nothing adds them up per task.
 - **The checks table showed iterations that never ran a check** (a refused answer appeared as a row with unchanged counts; viewers read it as "the reproduction passed"). Acted on in #46: only checks that ran in the sandbox are iterations, and a refused answer stays in the log (`Model call k: …`). Still open: the Run tab shows those calls only through the Log tab, not beside the steps.
 - **The inference API sometimes answers with no content** (4 of 5 INC-1043 runs, always after 40–45 s, never in INC-1042). Since #44 the failure names the reply's `finish_reason` (`length`, `content_filter`, ...) and reaches the task log, so the next empty reply on a live run tells us which it is. Not diagnosed yet.
+- **A model that stops on real bugs too readily** (#47). The stop answer gives the model a way out besides inventing a bug (INC-1043), but also one on a real bug. Watch live INC-1042 runs: one that ends `gave_up` with "The agent stopped without a fix: …" is a regression in the answer rules, not a pass. Count it in the eval set below.
 - **The prompt itself isn't visible anywhere.** You can reconstruct it from the code above, but there's no record of the exact messages a task sent.
 
 ## Open questions

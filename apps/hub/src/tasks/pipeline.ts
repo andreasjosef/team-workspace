@@ -7,9 +7,10 @@ import {
   draftReply,
   filesFromErrors,
   isCreate,
+  isStop,
   isTestPath,
   matchDecisions,
-  parseEditsResponse,
+  parseAnswer,
   promptSections,
   flaggedReason,
   rankFiles,
@@ -533,10 +534,12 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
       }
       const reply = await inference.complete(buildTaskMessages(ctx));
       if (!reply.success) return reply;
-      const parsed = parseEditsResponse(reply.value.content);
+      const parsed = parseAnswer(reply.value.content);
       if (parsed.success && parsed.value.reasoning)
         reasoning.push(parsed.value.reasoning);
-      if (parsed.success)
+      // A stop has no edits, and ends the loop before any check: its reason
+      // goes out in the loop's note and the status.
+      if (parsed.success && !isStop(parsed.value))
         answer = {
           ...(parsed.value.reasoning
             ? { reasoning: head(parsed.value.reasoning, MAX_REASONING_CHARS) }
@@ -597,6 +600,17 @@ const runTask = async (deps: PipelineDeps, task: TaskHandle, ws: Workspace) => {
   }
   if (outcome.status === 'gave_up') {
     emit({ type: 'status', status: 'gave_up', reason: outcome.reason });
+    return;
+  }
+  // The model chose not to change anything. No pull request, whatever was
+  // applied before; the reason (model output, capped by the loop) tells the
+  // support rep why. Spec 3 splits this into its own outcomes.
+  if (outcome.status === 'stopped') {
+    emit({
+      type: 'status',
+      status: 'gave_up',
+      reason: `The agent stopped without a fix: ${outcome.reason}`,
+    });
     return;
   }
   const receipt = buildPrBody({

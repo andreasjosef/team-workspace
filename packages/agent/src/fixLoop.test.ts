@@ -1,6 +1,6 @@
 import { fail, ok } from '@app/shared';
 import { describe, expect, it, vi } from 'vitest';
-import type { EditsResponse } from './edits.ts';
+import type { Answer, EditsResponse, StopAnswer } from './edits.ts';
 import { runTaskLoop, type CheckOutcome, type TaskStep } from './fixLoop.ts';
 
 const edit = { edits: [{ path: 'src/a.ts', search: 'a', replace: 'b' }] };
@@ -47,7 +47,7 @@ const reproChecks = {
 // `repro` picks what else that check shows. `answers` are the model's
 // replies in order; the last one repeats.
 const bugTask = async (
-  answers: EditsResponse[],
+  answers: Answer[],
   {
     reproFails = true,
     repro = 'fails' as keyof typeof reproChecks,
@@ -393,6 +393,99 @@ describe('runTaskLoop, bug task', () => {
     // The rejections still go out as notes, one per model call.
     expect(notes).toContain('Model call 1: answer rejected (bad JSON)');
     expect(notes).toContain('Model call 2: patch refused (deny src/auth/**)');
+  });
+});
+
+describe('runTaskLoop, stop answer', () => {
+  const stop: StopAnswer = {
+    action: 'stop',
+    reasoning: 'D-007 says codes are case-sensitive.',
+    reason: 'This is intended: discount codes are case-sensitive (D-007).',
+  };
+  // A fix attempt that leaves the reproduction failing.
+  const wrongFix: EditsResponse = {
+    edits: [{ path: 'src/b.ts', search: 'a', replace: 'b' }],
+  };
+
+  it('ends the loop stopped with the reason in the reproduce step, before any check', async () => {
+    const bug = await bugTask([stop, reproduction, edit]);
+    expect(bug.asked).toHaveLength(1);
+    expect(bug.curve).toEqual([0]);
+    expect(bug.files.size).toBe(0);
+    expect(bug.result).toEqual({
+      status: 'stopped',
+      reason: stop.reason,
+      iterations: 0,
+      applied: 0,
+      modelCalls: 1,
+    });
+  });
+
+  it('ends the loop stopped with the reason in the fix step', async () => {
+    const bug = await bugTask([reproduction, stop, edit]);
+    expect(bug.asked.map((a) => a.step)).toEqual(['reproduce', 'fix']);
+    expect(bug.curve).toEqual([0, 1]);
+    expect(bug.result).toEqual({
+      status: 'stopped',
+      reason: stop.reason,
+      iterations: 1,
+      applied: 1,
+      modelCalls: 2,
+    });
+  });
+
+  it("a stop after an applied fix doesn't count as green", async () => {
+    const bug = await bugTask([reproduction, wrongFix, stop]);
+    expect(bug.files.has('src/b.ts')).toBe(true);
+    expect(bug.curve).toEqual([0, 1, 1]);
+    expect(bug.result).toMatchObject({ status: 'stopped', applied: 2 });
+  });
+
+  it("a stop on a task that isn't a bug, after an applied edit, isn't green either", async () => {
+    const answers: Answer[] = [edit, stop];
+    const result = await runTaskLoop({
+      check: async () => ({ ...clean, testsFailed: 1, errors: '' }),
+      first: { ...clean, errors: '' },
+      propose: async () => ok(answers.shift()!),
+      apply: async () => ok(null),
+      onIteration: () => {},
+      baseline: clean,
+    });
+    expect(result).toMatchObject({
+      status: 'stopped',
+      reason: stop.reason,
+      applied: 1,
+    });
+  });
+
+  it('needs no policy check, notes the reasoning and the reason, and caps the reason', async () => {
+    const checkScope = vi.fn(() => ok(null));
+    const apply = vi.fn(async () => ok(null));
+    const notes: string[] = [];
+    const result = await runTaskLoop({
+      check: async () => ({ ...clean, errors: '' }),
+      propose: async () =>
+        ok({
+          action: 'stop' as const,
+          reasoning: 'why',
+          reason: 'x'.repeat(2000),
+        }),
+      checkScope,
+      apply,
+      reproduceFirst: true,
+      discard: async () => ok(null),
+      onIteration: () => {},
+      onNote: (note) => notes.push(note),
+      baseline: clean,
+    });
+    expect(checkScope).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    expect(result.status).toBe('stopped');
+    expect(result.reason).toBe(`${'x'.repeat(500)}…`);
+    expect(notes).toEqual([
+      'Model call 1: why',
+      `Model call 1: stopped (${'x'.repeat(500)}…)`,
+    ]);
   });
 });
 

@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyEdits, checkGuardrails, parseEditsResponse } from './edits.ts';
+import { applyEdits, checkGuardrails, isStop, parseAnswer } from './edits.ts';
 
 let root: string;
 beforeEach(async () => {
@@ -26,18 +26,73 @@ beforeEach(async () => {
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-describe('parseEditsResponse', () => {
+describe('parseAnswer', () => {
   it('finds the JSON inside a fenced reply, both edit kinds', () => {
-    const r = parseEditsResponse(
+    const r = parseAnswer(
       'Sure!\n```json\n{"edits":[{"path":"a.ts","search":"x","replace":"y"},{"path":"b.test.ts","create":"it()"}]}\n```'
     );
     expect(r.success).toBe(true);
   });
 
-  it('rejects a reply without edits', () => {
-    expect(parseEditsResponse('{"edits": []}').success).toBe(false);
-    expect(parseEditsResponse('I could not fix it').success).toBe(false);
+  it('reads an answer without "action" as an edit answer', () => {
+    const r = parseAnswer(
+      '{"reasoning":"fix","edits":[{"path":"a.ts","search":"x","replace":"y"}]}'
+    );
+    expect(r.success && !isStop(r.value) && r.value.edits).toHaveLength(1);
   });
+
+  it('rejects a reply without edits', () => {
+    expect(parseAnswer('{"edits": []}').success).toBe(false);
+    expect(parseAnswer('I could not fix it').success).toBe(false);
+    expect(parseAnswer('{"reasoning": "nothing to do"}').success).toBe(false);
+  });
+
+  it('accepts a stop answer with a reason', () => {
+    const r = parseAnswer(
+      '```json\n{"action":"stop","reasoning":"see D-007","reason":"Codes are case-sensitive on purpose (D-007)."}\n```'
+    );
+    expect(r).toEqual({
+      success: true,
+      value: {
+        action: 'stop',
+        reasoning: 'see D-007',
+        reason: 'Codes are case-sensitive on purpose (D-007).',
+      },
+    });
+    expect(r.success && isStop(r.value)).toBe(true);
+  });
+
+  it.each([
+    ['without a reason', '{"action":"stop"}'],
+    ['with an empty reason', '{"action":"stop","reason":"   "}'],
+    ['with a reason that is not text', '{"action":"stop","reason":42}'],
+  ])('rejects a stop %s', (_, reply) => {
+    const r = parseAnswer(reply);
+    expect(r.success).toBe(false);
+    expect(!r.success && r.message).toMatch(/needs a non-empty "reason"/);
+  });
+
+  it('rejects a stop that comes with edits', () => {
+    const r = parseAnswer(
+      '{"action":"stop","reason":"intended","edits":[{"path":"a.ts","search":"x","replace":"y"}]}'
+    );
+    expect(r.success).toBe(false);
+    expect(!r.success && r.message).toMatch(/carries no edits/);
+    expect(
+      parseAnswer('{"action":"stop","reason":"intended","edits":[]}').success
+    ).toBe(false);
+  });
+
+  it.each(['"explain"', '"STOP"', '"edit"', 'null', '{}'])(
+    'rejects the unknown action %s',
+    (action) => {
+      const r = parseAnswer(
+        `{"action":${action},"reason":"r","edits":[{"path":"a.ts","search":"x","replace":"y"}]}`
+      );
+      expect(r.success).toBe(false);
+      expect(!r.success && r.message).toMatch(/Unknown "action"/);
+    }
+  );
 });
 
 describe('checkGuardrails', () => {

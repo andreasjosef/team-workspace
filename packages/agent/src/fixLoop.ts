@@ -2,8 +2,10 @@ import { fail, ok, type Result } from '@app/shared';
 import type { CheckCounts } from './checks.ts';
 import {
   isCreate,
+  isStop,
   isTestPath,
   slashPath,
+  type Answer,
   type EditsResponse,
 } from './edits.ts';
 import { decide, defaultStopRules, type StopRules } from './stop.ts';
@@ -46,7 +48,7 @@ type LoopDeps = {
     // the reproduction's paths.
     step?: TaskStep;
     reproduction?: string[];
-  }) => Promise<Result<EditsResponse>>;
+  }) => Promise<Result<Answer>>;
   // The role's scope, checked on every answer before the step's own rule.
   // A refusal is a Failure with the reason.
   checkScope?: (edits: EditsResponse['edits']) => Result<unknown>;
@@ -86,8 +88,10 @@ type BugState =
   | { step: 'reproduce' }
   | { step: 'fix'; reproduction: string[]; since: number };
 
+// `stopped`: the model answered "stop" (it won't change anything), and
+// `reason` is its reason, capped at MAX_STOP_REASON_CHARS.
 export type TaskLoopResult = {
-  status: 'green' | 'gave_up' | 'halted';
+  status: 'green' | 'gave_up' | 'halted' | 'stopped';
   reason: string;
   // Checks that ran in the sandbox after the baseline.
   iterations: number;
@@ -96,16 +100,26 @@ export type TaskLoopResult = {
   modelCalls: number;
 };
 
+export const MAX_STOP_REASON_CHARS = 500;
+
+const capReason = (reason: string) => {
+  const text = reason.trim();
+  return text.length > MAX_STOP_REASON_CHARS
+    ? `${text.slice(0, MAX_STOP_REASON_CHARS)}…`
+    : text;
+};
+
 // The answer the loop goes on with, before anything is applied: valid, in
 // the role's scope, then allowed in this step. Scope comes first, so a step
 // never hides an out-of-scope edit from the policy (and its refusal count).
 const vetAnswer = (
-  proposal: Result<EditsResponse>,
+  proposal: Result<Answer>,
   checkScope: TaskLoopDeps['checkScope'],
   bug: BugState | undefined
 ): Result<EditsResponse> => {
   if (!proposal.success) return proposal;
   const answer = proposal.value;
+  if (isStop(answer)) return fail('unexpected', 'A stop has no edits to vet');
   const scope = checkScope?.(answer.edits);
   if (scope && !scope.success) return scope;
   const { edits } = answer;
@@ -221,6 +235,16 @@ export const runTaskLoop = async (
       ...(bug ? { step: bug.step } : {}),
       ...(bug?.step === 'fix' ? { reproduction: bug.reproduction } : {}),
     });
+    // A valid stop ends the loop at once, in either step, and never counts
+    // as green, even after an applied fix. It carries no edits, so there's
+    // nothing for the policy to check.
+    if (proposal.success && isStop(proposal.value)) {
+      const reason = capReason(proposal.value.reason);
+      if (proposal.value.reasoning)
+        deps.onNote?.(`${call}: ${proposal.value.reasoning}`);
+      deps.onNote?.(`${call}: stopped (${reason})`);
+      return { status: 'stopped', reason, ...end, modelCalls };
+    }
     if (proposal.success)
       deps.onNote?.(
         `${call}: ${proposal.value.reasoning ?? 'proposing edits'}`
