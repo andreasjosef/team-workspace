@@ -24,9 +24,9 @@ const Editor = ({ text, label }: { text: string; label: string }) => {
     );
   return (
     <section className="reply-draft" aria-label="Reply to the customer">
-      <div className="reply-draft-head">
-        <h2>Reply to the customer</h2>
-        <span className="muted small">{label}</span>
+      <div className="card-label">
+        You · reply to the customer
+        <span className="card-label-end">{label}</span>
       </div>
       <textarea
         className="reply-draft-text"

@@ -80,7 +80,8 @@ const Report = ({ report }: { report: Incident }) => {
       <h1 className="focus-title">{report.subject}</h1>
       <Workspace
         from={report.customer}
-        label={`via ${report.channel} · treated as untrusted`}
+        label={`${report.channel} · untrusted`}
+        at={report.at}
         text={report.body}
         task={task}
         forward={<ForwardButton report={report} />}

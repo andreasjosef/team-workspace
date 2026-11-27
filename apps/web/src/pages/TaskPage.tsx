@@ -34,9 +34,10 @@ export const TaskPage = () => {
         from={t.fixtureOf === null ? 'The customer' : 'The fixture'}
         label={
           t.fixtureOf === null
-            ? 'treated as untrusted'
+            ? 'untrusted'
             : "a script fixed in the hub's code, not the model"
         }
+        at={null}
         text={t.input.text}
         task={t}
       />

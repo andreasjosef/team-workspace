@@ -18,12 +18,14 @@ type View = 'conversation' | 'agent';
 export const Workspace = ({
   from,
   label,
+  at,
   text,
   task,
   forward,
 }: {
   from: string;
   label: string;
+  at: string | null;
   text: string;
   task: TaskSnapshot | undefined;
   forward?: ReactNode;
@@ -75,6 +77,7 @@ export const Workspace = ({
         <Conversation
           from={from}
           label={label}
+          at={at}
           text={text}
           task={task}
           forward={forward}

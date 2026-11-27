@@ -10,18 +10,21 @@ import { SafetyLine } from './Receipt.tsx';
 export const OutcomeCard = ({ task }: { task: TaskSnapshot }) => {
   const o = outcome(task);
   return (
-    <section className={`outcome outcome-${o.tone}`}>
-      <h2 className="outcome-headline">{o.headline}</h2>
-      <p className="outcome-detail">{o.detail}</p>
+    <section className={`card card-edge edge-${o.tone} outcome-card`}>
+      <div className="card-label">Outcome</div>
+      <h2 className="card-headline">{o.headline}</h2>
+      <p className="card-text">{o.detail}</p>
       {task.status === 'pr_opened' && task.pr && (
-        <a className="outcome-pr" href={task.pr.url} rel="noreferrer">
-          Pull request #{task.pr.number}
-          {task.pr.draft ? ' (draft)' : ''}, waiting for a developer →
-        </a>
+        <p className="card-actions">
+          <a href={task.pr.url} rel="noreferrer">
+            Pull request #{task.pr.number}
+            {task.pr.draft ? ' (draft)' : ''}, waiting for a developer →
+          </a>
+        </p>
       )}
       {/* The drafted reply, right under this card, says it better. */}
       {o.customer && !task.replyDraft && (
-        <p className="outcome-customer">
+        <p className="card-text">
           <span className="muted">You can tell the customer: </span>“
           {o.customer}”
         </p>

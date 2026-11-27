@@ -1,4 +1,9 @@
-import type { Role, TaskSnapshot, TaskStatus } from '@app/shared';
+import type {
+  EventEnvelope,
+  Role,
+  TaskSnapshot,
+  TaskStatus,
+} from '@app/shared';
 
 // Pure helpers behind the views: what each status looks like, and the task
 // in plain words. Kept out of the components so they're testable.
@@ -291,4 +296,156 @@ export const runSteps = (t: TaskSnapshot): RunStep[] => {
       tone: verdictTone[verdict],
     };
   });
+};
+
+// The conversation's timeline: the milestones of a task's event stream, in
+// the rep's words. Only what changes the story makes it in; the rest is on
+// the Agent view. Decided on event types and counts, never on model text.
+export type ThreadEvent = { seq: number; at: string; text: string; tone: Tone };
+
+export const threadEvents = (events: EventEnvelope[]): ThreadEvent[] => {
+  const out: ThreadEvent[] = [];
+  const add = (e: EventEnvelope, text: string, tone: Tone) =>
+    out.push({ seq: e.seq, at: e.at, text, tone });
+  let baseline: number | null = null;
+  let repro = false;
+  let green = false;
+  // After anything was stopped, passing checks aren't good news on their
+  // own, so they read neutral.
+  let stopped = false;
+  for (const env of events) {
+    const e = env.event;
+    if (out.length === 0) add(env, 'Forwarded to the agent', 'muted');
+    switch (e.type) {
+      case 'input_flagged':
+        stopped = true;
+        add(env, 'The report looks like it carries instructions', 'red');
+        break;
+      case 'iteration':
+        if (baseline === null) baseline = e.testsFailed;
+        else if (!repro && e.testsFailed > baseline) {
+          repro = true;
+          add(
+            env,
+            `Problem reproduced with a failing test (step ${e.n})`,
+            'gold'
+          );
+        } else if (
+          !green &&
+          e.testsFailed === 0 &&
+          e.typeErrors === 0 &&
+          !e.rejected &&
+          !e.refused?.length &&
+          (repro || e.proposed?.length)
+        ) {
+          green = true;
+          if (stopped) add(env, `Checks pass (step ${e.n})`, 'muted');
+          else add(env, `Fix passes the tests (step ${e.n})`, 'green');
+        }
+        break;
+      case 'policy_refused':
+        stopped = true;
+        add(env, `Edit to ${e.path} refused by the role policy`, 'red');
+        break;
+      case 'blocked':
+        stopped = true;
+        add(env, `Blocked by the sandbox: ${e.detail}`, 'red');
+        break;
+      case 'pr':
+        add(env, `Pull request #${e.number} opened`, 'gold');
+        break;
+      case 'status':
+        if (
+          e.status === 'gave_up' ||
+          e.status === 'flagged' ||
+          e.status === 'error'
+        )
+          add(
+            env,
+            `Stopped${e.reason ? `: ${e.reason}` : ''}`,
+            e.status === 'gave_up' ? 'muted' : 'red'
+          );
+        break;
+    }
+  }
+  return out;
+};
+
+// The live box: the hub's stages for one task, which is under way, and the
+// latest thing it did there. `preview` folds into the last stage.
+export type StageState = 'done' | 'current' | 'todo' | 'stopped';
+export type Stage = {
+  id: 'context' | 'baseline' | 'fix' | 'publish';
+  label: string;
+  state: StageState;
+  startedAt: string | null;
+  endedAt: string | null;
+  latest: string | null;
+};
+
+const STAGES: { id: Stage['id']; label: string }[] = [
+  { id: 'context', label: 'Reading the code and the decisions that apply' },
+  { id: 'baseline', label: 'Running the tests as they are' },
+  { id: 'fix', label: 'Reproducing the problem, then fixing it' },
+  { id: 'publish', label: 'Opening a pull request' },
+];
+
+export const liveStages = (events: EventEnvelope[], live: boolean): Stage[] => {
+  const stages: Stage[] = STAGES.map((s) => ({
+    ...s,
+    state: 'todo',
+    startedAt: null,
+    endedAt: null,
+    latest: null,
+  }));
+  let at = -1;
+  for (const { at: time, event: e } of events) {
+    if (e.type === 'phase') {
+      const next = STAGES.findIndex(
+        (s) => s.id === (e.phase === 'preview' ? 'publish' : e.phase)
+      );
+      if (next > at) {
+        for (let k = Math.max(0, at); k < next; k++)
+          stages[k] = { ...stages[k]!, state: 'done', endedAt: time };
+        at = next;
+        stages[at] = { ...stages[at]!, state: 'current', startedAt: time };
+      }
+      continue;
+    }
+    if (at < 0) continue;
+    const latest =
+      e.type === 'command'
+        ? `$ ${e.cmd} · exit ${e.exitCode} · ${(e.durationMs / 1000).toFixed(1)}s`
+        : e.type === 'iteration'
+          ? e.n === 0
+            ? `Baseline: ${e.testsFailed} failing tests, ${e.typeErrors} type errors`
+            : `Step ${e.n}: ${e.testsFailed} failing tests, ${e.typeErrors} type errors`
+          : e.type === 'policy_refused'
+            ? `Refused: ${e.path}`
+            : null;
+    if (latest) stages[at] = { ...stages[at]!, latest };
+  }
+  // Once the run is over, the stage it was in either finished or is where
+  // it stopped.
+  if (!live && at >= 0) {
+    const last = events[events.length - 1];
+    const ended = [...events]
+      .reverse()
+      .find((e) => e.event.type === 'status')?.event;
+    const ok = ended?.type === 'status' && ended.status === 'pr_opened';
+    stages[at] = {
+      ...stages[at]!,
+      state: ok ? 'done' : 'stopped',
+      endedAt: last?.at ?? null,
+    };
+  }
+  return stages;
+};
+
+export const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+export const elapsed = (fromIso: string, toMs: number) => {
+  const s = Math.max(0, Math.round((toMs - Date.parse(fromIso)) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 };

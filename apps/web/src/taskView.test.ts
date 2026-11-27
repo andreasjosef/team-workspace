@@ -1,7 +1,8 @@
-import type { TaskSnapshot } from '@app/shared';
+import type { EventEnvelope, TaskEvent, TaskSnapshot } from '@app/shared';
 import { describe, expect, it } from 'vitest';
 import {
   fixtureLayers,
+  liveStages,
   NETWORK_LAYER,
   outcome,
   progress,
@@ -10,6 +11,7 @@ import {
   runSteps,
   taskLayers,
   taskForIncident,
+  threadEvents,
   timeAgo,
 } from './taskView.ts';
 
@@ -242,5 +244,114 @@ describe('runSteps', () => {
       'better',
       'no change',
     ]);
+  });
+});
+
+const stream = (...events: TaskEvent[]): EventEnvelope[] =>
+  events.map((event, seq) => ({
+    seq,
+    at: `2026-11-27T10:00:${String(seq).padStart(2, '0')}Z`,
+    event,
+  }));
+
+describe('threadEvents', () => {
+  it('tells a fix as forwarded, reproduced, green, pull request', () => {
+    const events = stream(
+      { type: 'status', status: 'working' },
+      { type: 'phase', phase: 'context' },
+      { type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 },
+      { type: 'iteration', n: 1, typeErrors: 0, testsFailed: 1 },
+      { type: 'iteration', n: 2, typeErrors: 0, testsFailed: 0 },
+      { type: 'pr', url: 'u', number: 7, draft: false },
+      { type: 'status', status: 'pr_opened' }
+    );
+    expect(threadEvents(events).map((e) => e.text)).toEqual([
+      'Forwarded to the agent',
+      'Problem reproduced with a failing test (step 1)',
+      'Fix passes the tests (step 2)',
+      'Pull request #7 opened',
+    ]);
+  });
+
+  it('keeps what got stopped, and why the run ended', () => {
+    const events = stream(
+      { type: 'status', status: 'working' },
+      { type: 'input_flagged', signals: ['ignore previous'] },
+      { type: 'policy_refused', path: '.hub/roles/cs.yaml', rule: 'hub' },
+      { type: 'status', status: 'flagged', reason: '3 edits refused' }
+    );
+    expect(threadEvents(events).map((e) => [e.text, e.tone])).toEqual([
+      ['Forwarded to the agent', 'muted'],
+      ['The report looks like it carries instructions', 'red'],
+      ['Edit to .hub/roles/cs.yaml refused by the role policy', 'red'],
+      ['Stopped: 3 edits refused', 'red'],
+    ]);
+  });
+
+  it('reads passing checks as neutral once something was stopped', () => {
+    const events = stream(
+      { type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 },
+      { type: 'policy_refused', path: 'src/auth/users.ts', rule: 'scope' },
+      {
+        type: 'iteration',
+        n: 1,
+        typeErrors: 0,
+        testsFailed: 0,
+        proposed: [{ path: 'src/a.ts', create: false }],
+      }
+    );
+    expect(threadEvents(events).at(-1)).toMatchObject({
+      text: 'Checks pass (step 1)',
+      tone: 'muted',
+    });
+  });
+
+  it('does not call a step green before anything changed', () => {
+    const events = stream(
+      { type: 'iteration', n: 0, typeErrors: 0, testsFailed: 0 },
+      { type: 'iteration', n: 1, typeErrors: 0, testsFailed: 0, rejected: 'x' }
+    );
+    expect(threadEvents(events)).toHaveLength(1);
+  });
+});
+
+describe('liveStages', () => {
+  const states = (events: EventEnvelope[], live: boolean) =>
+    liveStages(events, live).map((s) => s.state);
+
+  it('marks the stage under way and the ones before it', () => {
+    const events = stream(
+      { type: 'phase', phase: 'context' },
+      { type: 'phase', phase: 'baseline' },
+      {
+        type: 'command',
+        cmd: 'pnpm test',
+        exitCode: 0,
+        durationMs: 1200,
+        output: '',
+      }
+    );
+    expect(states(events, true)).toEqual(['done', 'current', 'todo', 'todo']);
+    expect(liveStages(events, true)[1]!.latest).toBe(
+      '$ pnpm test · exit 0 · 1.2s'
+    );
+  });
+
+  it('shows where an ended run stopped', () => {
+    const events = stream(
+      { type: 'phase', phase: 'context' },
+      { type: 'phase', phase: 'fix' },
+      { type: 'status', status: 'gave_up' }
+    );
+    expect(states(events, false)).toEqual(['done', 'done', 'stopped', 'todo']);
+  });
+
+  it('finishes the last stage of a published run', () => {
+    const events = stream(
+      { type: 'phase', phase: 'context' },
+      { type: 'phase', phase: 'preview' },
+      { type: 'status', status: 'pr_opened' }
+    );
+    expect(states(events, false)).toEqual(['done', 'done', 'done', 'done']);
   });
 });
